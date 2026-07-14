@@ -161,6 +161,8 @@ dependencies = [
 name = "ct-shim"
 version = "0.1.0"
 dependencies = [
+ "chaos-core",
+ "chaosd",
  "serde",
  "serde_json",
  "tokio",

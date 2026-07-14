@@ -1,11 +1,6 @@
-mod handoff;
-mod server;
-mod state;
-mod twin;
-
-use crate::server::{bind_default_listener, serve, ServerConfig};
-use crate::state::shared_state;
-use crate::twin::NoTwin;
+use chaosd::server::{bind_default_listener, serve, ServerConfig};
+use chaosd::state::shared_state;
+use chaosd::twin::NoTwin;
 use std::sync::Arc;
 
 #[tokio::main(flavor = "current_thread")]
