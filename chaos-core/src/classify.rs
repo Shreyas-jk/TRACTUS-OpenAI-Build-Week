@@ -26,6 +26,7 @@ pub fn classify(command: &SimpleCommand, cwd: &Path, workspace_root: &Path) -> C
 
     let positional = positional_args(command, entry.subcommand.is_some());
     let mut effects = entry.effects.to_effects(&positional, cwd, workspace_root);
+    effects.family = Some(entry.family.clone());
 
     if let Some(escalations) = &entry.flag_escalations {
         for flag in command.argv.iter().skip(1) {

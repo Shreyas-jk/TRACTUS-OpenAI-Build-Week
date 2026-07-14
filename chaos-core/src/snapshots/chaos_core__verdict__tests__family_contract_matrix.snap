@@ -1,0 +1,58 @@
+---
+source: chaos-core/src/verdict.rs
+expression: matrix
+---
+cargo build
+  example: R-PATH-01,R-OP-01
+  permissive: IN_SCOPE
+cargo test
+  example: R-PATH-01
+  permissive: IN_SCOPE
+cargo run
+  example: R-PATH-01,R-OP-01
+  permissive: IN_SCOPE
+cargo add axios
+  example: R-NET-01,R-DEP-01,R-PATH-01,R-PATH-01
+  permissive: IN_SCOPE
+cargo remove axios
+  example: R-DEP-01,R-PATH-01,R-PATH-01
+  permissive: IN_SCOPE
+git status
+  example: IN_SCOPE
+  permissive: IN_SCOPE
+git diff
+  example: IN_SCOPE
+  permissive: IN_SCOPE
+git log
+  example: R-GIT-01
+  permissive: IN_SCOPE
+git add tests/api_test.rs
+  example: R-GIT-01,R-OP-01
+  permissive: IN_SCOPE
+git commit -m fix
+  example: R-GIT-01,R-OP-01
+  permissive: IN_SCOPE
+git checkout main
+  example: R-GIT-01,R-OP-01
+  permissive: IN_SCOPE
+git push origin main
+  example: R-NET-01,R-GIT-01,R-OP-01
+  permissive: IN_SCOPE
+rm -rf tmp
+  example: R-PATH-01,R-OP-01
+  permissive: IN_SCOPE
+mv src/a src/b
+  example: R-PATH-01,R-PATH-01
+  permissive: IN_SCOPE
+cp src/a src/b
+  example: R-PATH-01
+  permissive: IN_SCOPE
+npm install express
+  example: R-NET-01,R-DEP-01,R-PATH-01,R-PATH-01
+  permissive: IN_SCOPE
+pip install requests
+  example: R-NET-01,R-DEP-01
+  permissive: IN_SCOPE
+curl https://example.com
+  example: R-NET-01,R-OP-01
+  permissive: IN_SCOPE

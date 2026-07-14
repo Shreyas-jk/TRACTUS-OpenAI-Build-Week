@@ -63,7 +63,7 @@ impl OpSet {
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(transparent)]
-pub struct GitOpSet(u8);
+pub struct GitOpSet(u16);
 
 impl GitOpSet {
     pub const fn empty() -> Self {
@@ -71,17 +71,18 @@ impl GitOpSet {
     }
 
     pub const fn contains(self, op: GitOp) -> bool {
-        self.0 & (1 << op as u8) != 0
+        self.0 & (1u16 << op as u8) != 0
     }
 
     pub fn insert(&mut self, op: GitOp) {
-        self.0 |= 1 << op as u8;
+        self.0 |= 1u16 << op as u8;
     }
 }
 
 /// What a command will do, either declared by the classifier or observed by the twin.
 #[derive(Debug, Default)]
 pub struct Effects {
+    pub family: Option<String>,
     pub reads: Vec<PathBuf>,
     pub writes: Vec<PathBuf>,
     pub deletes: Vec<PathBuf>,
