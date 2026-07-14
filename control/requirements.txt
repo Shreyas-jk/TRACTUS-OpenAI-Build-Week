@@ -1,0 +1,6 @@
+# Requires Python 3.12.
+fastapi
+uvicorn
+openai
+pytest
+pytest-asyncio

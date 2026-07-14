@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chaos Twin</title>
+  <style>
+    :root { color-scheme: dark; font-family: ui-sans-serif, system-ui, sans-serif; }
+    body { max-width: 920px; margin: 2rem auto; padding: 0 1rem; background: #101218; color: #ecf0f8; }
+    h1 { margin-bottom: .25rem; } .muted { color: #9da7b8; }
+    form, section { background: #181c25; border: 1px solid #2c3444; border-radius: .7rem; padding: 1rem; margin: 1rem 0; }
+    input[type="text"] { box-sizing: border-box; width: 100%; background: #0d1016; border: 1px solid #3a465c; color: inherit; border-radius: .4rem; padding: .7rem; }
+    button { cursor: pointer; border: 0; border-radius: .4rem; padding: .55rem .8rem; margin-top: .65rem; background: #7dd3fc; color: #082f49; font-weight: 700; }
+    .group { border-top: 1px solid #30394a; margin-top: .75rem; padding-top: .75rem; }
+    .row { display: flex; align-items: center; gap: .5rem; padding: .2rem 0; }
+    .de-emphasized { opacity: .58; } .value { font-family: ui-monospace, SFMono-Regular, monospace; }
+    #events { display: grid; gap: .65rem; } .event { background: #0d1016; border-radius: .45rem; padding: .7rem; }
+    .chip { display: inline-block; border-radius: 999px; padding: .1rem .5rem; font-size: .78rem; font-weight: 800; margin-right: .4rem; }
+    .allow { background: #14532d; color: #bbf7d0; } .block { background: #7f1d1d; color: #fecaca; } .hold { background: #78350f; color: #fde68a; }
+    pre { white-space: pre-wrap; margin: .5rem 0 0; color: #c9d4e8; } .actions button { margin-right: .4rem; }
+  </style>
+</head>
+<body>
+  <h1>Chaos Twin</h1>
+  <p class="muted">Intent contract control plane</p>
+
+  <form id="task-form">
+    <label for="task-request">What should the coding agent do?</label>
+    <input id="task-request" type="text" required placeholder="Fix the failing test in tests/api_test.rs">
+    <button type="submit">Create contract</button>
+    <p id="task-status" class="muted" aria-live="polite"></p>
+  </form>
+
+  <section id="contract-section" hidden>
+    <h2>Approved scope</h2>
+    <p id="contract-task" class="muted"></p>
+    <div id="contract-card"></div>
+    <button id="confirm-contract">Confirm contract</button>
+  </section>
+
+  <section>
+    <h2>Live enforcement events</h2>
+    <div id="events" aria-live="polite"></div>
+  </section>
+
+  <script>
+    const state = { contract: null, events: new Map() };
+    const operations = ["read", "edit", "create", "delete", "test", "build", "run"];
+    const gitOperations = ["status", "diff", "log", "add", "commit", "checkout", "push", "force_push", "reset_hard", "clean"];
+
+    document.querySelector("#task-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const status = document.querySelector("#task-status");
+      status.textContent = "Extracting least-privilege scope…";
+      const response = await fetch("/task", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ request: document.querySelector("#task-request").value }) });
+      if (!response.ok) { status.textContent = "Could not create a contract."; return; }
+      const card = await response.json();
+      state.contract = card.contract;
+      renderContract(card);
+      status.textContent = "Review the pre-checked contract, then confirm it.";
+    });
+
+    document.querySelector("#confirm-contract").addEventListener("click", async () => {
+      const response = await fetch("/contract/confirm", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ contract: state.contract }) });
+      document.querySelector("#task-status").textContent = response.ok ? "Contract sent to chaosd." : "chaosd did not accept the contract.";
+    });
+
+    function renderContract(card) {
+      document.querySelector("#contract-section").hidden = false;
+      document.querySelector("#contract-task").textContent = card.contract.task;
+      const root = document.querySelector("#contract-card"); root.replaceChildren();
+      for (const group of card.groups) {
+        const section = document.createElement("div"); section.className = "group";
+        section.innerHTML = `<strong>${group.label}</strong>`;
+        for (const clause of group.clauses) {
+          const row = document.createElement("label"); row.className = `row ${clause.de_emphasized ? "de-emphasized" : ""}`;
+          const box = document.createElement("input"); box.type = "checkbox"; box.checked = clause.enabled;
+          box.addEventListener("change", () => amendContract(group.id, clause, box.checked));
+          const value = document.createElement("span"); value.className = "value";
+          value.textContent = typeof clause.value === "boolean" ? (clause.value ? "ON" : "OFF") : clause.value;
+          row.append(box, value); section.append(row);
+        }
+        root.append(section);
+      }
+    }
+
+    function amendContract(group, clause, enabled) {
+      const listKey = group === "operations" ? "allowed_ops" : group === "git" ? "git_ops" : group === "paths" ? "allowed_paths" : null;
+      if (listKey) {
+        const list = state.contract[listKey];
+        if (enabled && !list.includes(clause.value)) list.push(clause.value);
+        if (!enabled) state.contract[listKey] = list.filter(value => value !== clause.value);
+      } else if (group === "dependencies") state.contract.deps_may_change = enabled;
+      else if (group === "network") state.contract.network = enabled;
+    }
+
+    function eventState(event) {
+      if (event.action === "allow") return "allow";
+      if (event.action === "hold") return "hold";
+      return "block";
+    }
+
+    function renderEvent(event) {
+      const id = event.id || `${event.type}-${Date.now()}`;
+      const card = state.events.get(id) || document.createElement("article");
+      card.className = "event"; state.events.set(id, card);
+      const verdict = eventState(event);
+      const proofs = event.proofs ? event.proofs.map(proof => proof.rendered || proof.clause || String(proof)).join("\n") : "";
+      card.innerHTML = `<span class="chip ${verdict}">${verdict.toUpperCase()}</span><code>${event.cmd || event.type || "event"}</code><pre>${proofs}</pre>${event.explanation ? `<p>${event.explanation}</p>` : ""}`;
+      if (verdict === "hold") {
+        const actions = document.createElement("div"); actions.className = "actions";
+        actions.innerHTML = '<button>Approve once</button><button>Reject</button>';
+        actions.children[0].onclick = () => resolve(event.id, "approve_once");
+        actions.children[1].onclick = () => resolve(event.id, "reject");
+        card.append(actions);
+      }
+      document.querySelector("#events").prepend(card);
+    }
+
+    async function resolve(id, decision) {
+      await fetch("/resolve", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id, decision }) });
+    }
+
+    const scheme = location.protocol === "https:" ? "wss" : "ws";
+    const eventsSocket = new WebSocket(`${scheme}://${location.host}/events`);
+    eventsSocket.onmessage = (message) => renderEvent(JSON.parse(message.data));
+  </script>
+</body>
+</html>
