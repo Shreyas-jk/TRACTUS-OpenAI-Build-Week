@@ -164,6 +164,7 @@ mod tests {
     use crate::contract::{ContractSpec, GitOp, GitOpSet, OpClass, OpSet, Reason};
     use crate::parse::{parse, ParseOutcome};
     use insta::assert_snapshot;
+    use proptest::prelude::*;
     use std::path::{Path, PathBuf};
 
     const ROOT: &str = "/workspace/repo";
@@ -384,5 +385,51 @@ mod tests {
 
         assert_eq!(effects.reads, [PathBuf::from("/workspace/repo/tests/input.txt")]);
         assert_eq!(effects.writes, [PathBuf::from("/workspace/repo/tests/output.txt")]);
+    }
+
+    proptest! {
+        #[test]
+        fn never_allows_unparsed_or_unclassified_commands(raw in ".{0,200}") {
+            let contract = example_contract();
+            let history = History::default();
+            let (verdict, parse_succeeded, every_segment_classified) = match parse(&raw) {
+                ParseOutcome::Commands(commands) => {
+                    let mut every_segment_classified = true;
+                    let mut segment_verdicts = Vec::with_capacity(commands.len());
+
+                    for command in commands {
+                        let classification = classify(
+                            &command,
+                            Path::new(ROOT),
+                            Path::new(ROOT),
+                        );
+                        every_segment_classified &= matches!(
+                            &classification,
+                            Classification::Effects(_)
+                        );
+                        let effects = assemble(
+                            &command,
+                            classification,
+                            Path::new(ROOT),
+                            Path::new(ROOT),
+                        );
+                        segment_verdicts.push(check(&effects, &contract, &history));
+                    }
+
+                    (
+                        combine_verdicts(segment_verdicts),
+                        true,
+                        every_segment_classified,
+                    )
+                }
+                ParseOutcome::Opaque(_) => (Verdict::NeedsHuman(Reason::Opaque), false, false),
+                ParseOutcome::NeedsHuman(reason) => (Verdict::NeedsHuman(reason), false, false),
+            };
+
+            if matches!(verdict, Verdict::InScope) {
+                prop_assert!(parse_succeeded);
+                prop_assert!(every_segment_classified);
+            }
+        }
     }
 }
