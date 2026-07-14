@@ -99,6 +99,9 @@ async fn handle_connection(stream: UnixStream, config: Arc<ServerConfig>) -> io:
             }
             Request::Report { id, exit_code } => {
                 let recorded = record_report(&config.state, &id, exit_code).await;
+                if recorded {
+                    config.twin.invalidate();
+                }
                 write_json(
                     &mut write_half,
                     &json!({"type": "report", "id": id, "recorded": recorded}),

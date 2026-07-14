@@ -11,12 +11,15 @@ use std::pin::Pin;
 use std::process::Output;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use tokio::process::Command;
+use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
 
 const TWIN_TIMEOUT: Duration = Duration::from_secs(3);
 const OVERLAY_UNAVAILABLE: &str = "CHAOSTWIN_OVERLAY_UNAVAILABLE";
-pub const TWIN_CONTAINER_PREFIX: &str = "chaostwin-";
+pub const TWIN_CONTAINER_PREFIX: &str = "chaostwin-twin-";
+const POOL_CONTAINER_PREFIX: &str = "chaostwin-pool-";
 static NEXT_TWIN: AtomicUsize = AtomicUsize::new(0);
 
 pub enum TwinOutcome {
@@ -30,6 +33,8 @@ pub trait TwinExecutor: Send + Sync {
         cmd: &'a SimpleCommand,
         cwd: &'a Path,
     ) -> Pin<Box<dyn Future<Output = TwinOutcome> + Send + 'a>>;
+
+    fn invalidate(&self) {}
 }
 
 #[derive(Default)]
@@ -242,6 +247,200 @@ impl TwinExecutor for DockerTwin {
     }
 }
 
+pub struct PooledTwin {
+    fallback: Arc<DockerTwin>,
+    pool: Arc<Mutex<PoolState>>,
+}
+
+struct PoolState {
+    ready: Vec<ReadyUnit>,
+    generation: u64,
+    closed: bool,
+}
+
+struct ReadyUnit {
+    snapshot: TemporaryTree,
+    container_name: String,
+}
+
+impl PooledTwin {
+    pub fn new(workspace_root: PathBuf) -> Self {
+        Self {
+            fallback: Arc::new(DockerTwin::new(workspace_root)),
+            pool: Arc::new(Mutex::new(PoolState {
+                ready: Vec::new(),
+                generation: 0,
+                closed: false,
+            })),
+        }
+    }
+
+    pub fn start(&self) {
+        self.fallback.spawn_warmup();
+        schedule_replenish(Arc::clone(&self.pool), Arc::clone(&self.fallback));
+    }
+
+    async fn speculate_inner(&self, command: &SimpleCommand, cwd: &Path) -> TwinOutcome {
+        let ready = self.pool.lock().await.ready.pop();
+        let Some(ready) = ready else {
+            schedule_replenish(Arc::clone(&self.pool), Arc::clone(&self.fallback));
+            return self.fallback.speculate(command, cwd).await;
+        };
+        schedule_replenish(Arc::clone(&self.pool), Arc::clone(&self.fallback));
+
+        let command_string = render_command(command);
+        let workdir = self.fallback.container_workdir(cwd);
+        let output = self
+            .fallback
+            .run_docker(
+                &ready.container_name,
+                [
+                    "exec".to_owned(),
+                    "-w".to_owned(),
+                    workdir,
+                    ready.container_name.clone(),
+                    "sh".to_owned(),
+                    "-c".to_owned(),
+                    command_string,
+                ],
+            )
+            .await;
+        let effects = match output {
+            Ok(_) => effects_from_recursive_diff(&self.fallback.workspace_root, &ready.snapshot.path)
+                .map(TwinOutcome::Effects)
+                .unwrap_or(TwinOutcome::NeedsHuman(Reason::Opaque)),
+            Err(TwinError::Timeout) => TwinOutcome::NeedsHuman(Reason::TwinTimeout),
+            Err(TwinError::Unavailable) => TwinOutcome::NeedsHuman(Reason::Opaque),
+        };
+        destroy_ready_unit(ready).await;
+        effects
+    }
+
+    #[cfg(test)]
+    async fn invalidate_pool(&self) {
+        invalidate_pool(Arc::clone(&self.pool), Arc::clone(&self.fallback)).await;
+    }
+
+    #[cfg(test)]
+    async fn ready_count(&self) -> usize {
+        self.pool.lock().await.ready.len()
+    }
+
+    #[cfg(test)]
+    async fn shutdown_pool(&self) {
+        let units = {
+            let mut state = self.pool.lock().await;
+            state.closed = true;
+            state.generation += 1;
+            std::mem::take(&mut state.ready)
+        };
+        for unit in units {
+            destroy_ready_unit(unit).await;
+        }
+    }
+}
+
+impl TwinExecutor for PooledTwin {
+    fn speculate<'a>(
+        &'a self,
+        command: &'a SimpleCommand,
+        cwd: &'a Path,
+    ) -> Pin<Box<dyn Future<Output = TwinOutcome> + Send + 'a>> {
+        Box::pin(async move { self.speculate_inner(command, cwd).await })
+    }
+
+    fn invalidate(&self) {
+        let pool = Arc::clone(&self.pool);
+        let fallback = Arc::clone(&self.fallback);
+        tokio::spawn(async move { invalidate_pool(pool, fallback).await });
+    }
+}
+
+fn schedule_replenish(pool: Arc<Mutex<PoolState>>, fallback: Arc<DockerTwin>) {
+    tokio::spawn(async move {
+        loop {
+            let generation = {
+                let state = pool.lock().await;
+                if state.closed || state.ready.len() >= 2 {
+                    return;
+                }
+                state.generation
+            };
+            let Some(unit) = create_ready_unit(Arc::clone(&fallback)).await else {
+                tracing::debug!("unable to replenish Docker twin pool");
+                return;
+            };
+            let mut state = pool.lock().await;
+            if state.generation == generation && state.ready.len() < 2 {
+                state.ready.push(unit);
+            } else {
+                drop(state);
+                destroy_ready_unit(unit).await;
+            }
+        }
+    });
+}
+
+async fn invalidate_pool(pool: Arc<Mutex<PoolState>>, fallback: Arc<DockerTwin>) {
+    let units = {
+        let mut state = pool.lock().await;
+        if state.closed {
+            return;
+        }
+        state.generation += 1;
+        std::mem::take(&mut state.ready)
+    };
+    for unit in units {
+        destroy_ready_unit(unit).await;
+    }
+    schedule_replenish(pool, fallback);
+}
+
+async fn create_ready_unit(fallback: Arc<DockerTwin>) -> Option<ReadyUnit> {
+    let snapshot = TemporaryTree::new("chaostwin-pool").ok()?;
+    copy_workspace(&fallback.workspace_root, &snapshot.path).await.ok()?;
+    let container_name = pool_container_name();
+    let snapshot_mount = snapshot.path.to_string_lossy().to_string();
+    let output = fallback
+        .run_docker(
+            &container_name,
+            [
+                "run".to_owned(),
+                "-d".to_owned(),
+                "--rm".to_owned(),
+                "--name".to_owned(),
+                container_name.clone(),
+                "--network=none".to_owned(),
+                "--pids-limit=256".to_owned(),
+                "-v".to_owned(),
+                format!("{snapshot_mount}:/work"),
+                fallback.image.clone(),
+                "sleep".to_owned(),
+                "infinity".to_owned(),
+            ],
+        )
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(ReadyUnit {
+        snapshot,
+        container_name,
+    })
+}
+
+async fn destroy_ready_unit(unit: ReadyUnit) {
+    let _ = Command::new("docker")
+        .arg("kill")
+        .arg(&unit.container_name)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .await;
+    drop(unit);
+}
+
 enum TwinError {
     Timeout,
     Unavailable,
@@ -289,6 +488,11 @@ fn shell_quote(value: &str) -> String {
 fn container_name(kind: &str) -> String {
     let sequence = NEXT_TWIN.fetch_add(1, Ordering::Relaxed);
     format!("{TWIN_CONTAINER_PREFIX}{kind}-{}-{sequence}", std::process::id())
+}
+
+fn pool_container_name() -> String {
+    let sequence = NEXT_TWIN.fetch_add(1, Ordering::Relaxed);
+    format!("{POOL_CONTAINER_PREFIX}{}-{sequence}", std::process::id())
 }
 
 fn overlay_unavailable(output: &Output) -> bool {
@@ -452,7 +656,44 @@ fn detect_dependency_change(effects: &mut Effects) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::time::Instant;
+    use tokio::time::{sleep, Instant};
+
+    fn simple_command(argv: &[&str]) -> SimpleCommand {
+        SimpleCommand {
+            argv: argv.iter().map(|argument| (*argument).to_owned()).collect(),
+            redirect_writes: Vec::new(),
+            redirect_reads: Vec::new(),
+            env: Default::default(),
+            operator_after: None,
+        }
+    }
+
+    async fn wait_for_ready(pool: &PooledTwin) {
+        for _ in 0..50 {
+            if pool.ready_count().await >= 2 {
+                return;
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+        panic!("pooled twin did not replenish two ready units");
+    }
+
+    async fn wait_for_pool_cleanup() {
+        let prefix = format!("{POOL_CONTAINER_PREFIX}{}-", std::process::id());
+        for _ in 0..50 {
+            let output = Command::new("docker")
+                .args(["ps", "--format", "{{.Names}}"])
+                .output()
+                .await
+                .unwrap();
+            let names = String::from_utf8_lossy(&output.stdout);
+            if names.lines().all(|name| !name.starts_with(&prefix)) {
+                return;
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+        panic!("pooled twin containers did not shut down");
+    }
 
     #[tokio::test]
     #[ignore = "requires Docker Desktop and an alpine image"]
@@ -460,13 +701,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("chaostwin-twin-test-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         let twin = DockerTwin::new(root.clone());
-        let command = SimpleCommand {
-            argv: vec!["touch".to_owned(), "twin-created.txt".to_owned()],
-            redirect_writes: Vec::new(),
-            redirect_reads: Vec::new(),
-            env: Default::default(),
-            operator_after: None,
-        };
+        let command = simple_command(&["touch", "twin-created.txt"]);
 
         let outcome = twin.speculate(&command, &root).await;
         match outcome {
@@ -484,13 +719,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("chaostwin-twin-timeout-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         let twin = DockerTwin::new(root.clone());
-        let command = SimpleCommand {
-            argv: vec!["sleep".to_owned(), "10".to_owned()],
-            redirect_writes: Vec::new(),
-            redirect_reads: Vec::new(),
-            env: Default::default(),
-            operator_after: None,
-        };
+        let command = simple_command(&["sleep", "10"]);
 
         let started = Instant::now();
         let outcome = twin.speculate(&command, &root).await;
@@ -507,6 +736,61 @@ mod tests {
             names.lines().all(|name| !name.starts_with(TWIN_CONTAINER_PREFIX)),
             "twin container remained after timeout: {names}"
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Docker Desktop and an alpine image"]
+    async fn pooled_twin_reuses_two_ready_units_for_consecutive_speculations() {
+        let root = std::env::temp_dir().join(format!("chaostwin-pool-test-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let twin = PooledTwin::new(root.clone());
+        twin.start();
+        wait_for_ready(&twin).await;
+
+        for file in ["first.txt", "second.txt"] {
+            let command = simple_command(&["touch", file]);
+            let outcome = twin.speculate(&command, &root).await;
+            match outcome {
+                TwinOutcome::Effects(effects) => {
+                    assert!(effects.writes.contains(&root.join(file)));
+                }
+                TwinOutcome::NeedsHuman(reason) => panic!("pooled twin did not run: {reason:?}"),
+            }
+        }
+
+        twin.shutdown_pool().await;
+        wait_for_pool_cleanup().await;
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Docker Desktop and an alpine image"]
+    async fn pooled_twin_invalidation_rebuilds_from_current_workspace() {
+        let root = std::env::temp_dir().join(format!("chaostwin-pool-stale-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let twin = PooledTwin::new(root.clone());
+        twin.start();
+        wait_for_ready(&twin).await;
+
+        let first = simple_command(&["touch", "first.txt"]);
+        assert!(matches!(twin.speculate(&first, &root).await, TwinOutcome::Effects(_)));
+
+        let current = root.join("created-after-first-speculation.txt");
+        fs::write(&current, "current workspace state").unwrap();
+        twin.invalidate_pool().await;
+        wait_for_ready(&twin).await;
+
+        let second = simple_command(&["rm", "created-after-first-speculation.txt"]);
+        match twin.speculate(&second, &root).await {
+            TwinOutcome::Effects(effects) => {
+                assert!(effects.deletes.contains(&current));
+            }
+            TwinOutcome::NeedsHuman(reason) => panic!("pooled twin used stale state: {reason:?}"),
+        }
+
+        twin.shutdown_pool().await;
+        wait_for_pool_cleanup().await;
         let _ = fs::remove_dir_all(root);
     }
 }
