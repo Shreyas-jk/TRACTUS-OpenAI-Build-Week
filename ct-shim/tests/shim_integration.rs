@@ -148,3 +148,18 @@ async fn shim_executes_only_allowed_commands_and_fails_closed() {
     daemon.abort();
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[test]
+fn shim_rejects_wrong_arguments_with_usage() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_ct-shim"))
+        .arg("-x")
+        .arg("touch should-not-run")
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "usage: ct-shim -c <command>\n"
+    );
+}

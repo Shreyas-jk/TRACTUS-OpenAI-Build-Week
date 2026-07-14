@@ -16,6 +16,7 @@ use tokio::time::{timeout, Duration};
 
 const TWIN_TIMEOUT: Duration = Duration::from_secs(3);
 const OVERLAY_UNAVAILABLE: &str = "CHAOSTWIN_OVERLAY_UNAVAILABLE";
+pub const TWIN_CONTAINER_PREFIX: &str = "chaostwin-";
 static NEXT_TWIN: AtomicUsize = AtomicUsize::new(0);
 
 pub enum TwinOutcome {
@@ -55,6 +56,33 @@ impl DockerTwin {
             workspace_root,
             image: "alpine:3.20".to_owned(),
         }
+    }
+
+    pub fn spawn_warmup(&self) {
+        let image = self.image.clone();
+        tokio::spawn(async move {
+            let inspected = Command::new("docker")
+                .args(["image", "inspect", &image])
+                .output()
+                .await
+                .is_ok_and(|output| output.status.success());
+            if inspected {
+                tracing::info!(%image, "Docker twin image is warm");
+                return;
+            }
+
+            match Command::new("docker").args(["pull", &image]).output().await {
+                Ok(output) if output.status.success() => {
+                    tracing::info!(%image, "Docker twin image warmed");
+                }
+                Ok(output) => {
+                    tracing::warn!(%image, status = ?output.status, "Docker twin image warmup failed");
+                }
+                Err(error) => {
+                    tracing::warn!(%image, %error, "Docker unavailable during twin warmup");
+                }
+            }
+        });
     }
 
     async fn speculate_inner(&self, command: &SimpleCommand, cwd: &Path) -> TwinOutcome {
@@ -260,7 +288,7 @@ fn shell_quote(value: &str) -> String {
 
 fn container_name(kind: &str) -> String {
     let sequence = NEXT_TWIN.fetch_add(1, Ordering::Relaxed);
-    format!("chaostwin-{kind}-{}-{sequence}", std::process::id())
+    format!("{TWIN_CONTAINER_PREFIX}{kind}-{}-{sequence}", std::process::id())
 }
 
 fn overlay_unavailable(output: &Output) -> bool {
@@ -424,6 +452,7 @@ fn detect_dependency_change(effects: &mut Effects) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::time::Instant;
 
     #[tokio::test]
     #[ignore = "requires Docker Desktop and an alpine image"]
@@ -446,6 +475,38 @@ mod tests {
             }
             TwinOutcome::NeedsHuman(reason) => panic!("twin did not run: {reason:?}"),
         }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Docker Desktop and an alpine image"]
+    async fn docker_twin_timeout_kills_the_named_container() {
+        let root = std::env::temp_dir().join(format!("chaostwin-twin-timeout-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let twin = DockerTwin::new(root.clone());
+        let command = SimpleCommand {
+            argv: vec!["sleep".to_owned(), "10".to_owned()],
+            redirect_writes: Vec::new(),
+            redirect_reads: Vec::new(),
+            env: Default::default(),
+            operator_after: None,
+        };
+
+        let started = Instant::now();
+        let outcome = twin.speculate(&command, &root).await;
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(matches!(outcome, TwinOutcome::NeedsHuman(Reason::TwinTimeout)));
+
+        let containers = Command::new("docker")
+            .args(["ps", "--format", "{{.Names}}"])
+            .output()
+            .await
+            .unwrap();
+        let names = String::from_utf8_lossy(&containers.stdout);
+        assert!(
+            names.lines().all(|name| !name.starts_with(TWIN_CONTAINER_PREFIX)),
+            "twin container remained after timeout: {names}"
+        );
         let _ = fs::remove_dir_all(root);
     }
 }

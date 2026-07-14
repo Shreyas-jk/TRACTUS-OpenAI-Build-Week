@@ -9,7 +9,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const DAEMON_UNREACHABLE: &str =
     "Chaos Twin daemon unreachable; command not executed. Start chaosd or unset SHELL.";
+const USAGE: &str = "usage: ct-shim -c <command>";
 const HOLD_WAIT: Duration = Duration::from_secs(65);
+const REPORT_ACK_WAIT: Duration = Duration::from_secs(2);
 
 fn main() {
     process::exit(run_from_args(env::args().collect()));
@@ -17,7 +19,7 @@ fn main() {
 
 fn run_from_args(args: Vec<String>) -> i32 {
     let Some(command) = shell_command(&args) else {
-        println!("{DAEMON_UNREACHABLE}");
+        println!("{USAGE}");
         return 1;
     };
 
@@ -102,7 +104,7 @@ fn execute_and_report(command: &str, id: &str, connection: &mut UnixStream) -> i
     });
     // Report failures cannot authorize a fallback execution: the approved command
     // has already completed, so preserve its real exit status.
-    let _ = write_json(connection, &report).and_then(|_| read_response(connection, HOLD_WAIT));
+    let _ = write_json(connection, &report).and_then(|_| read_response(connection, REPORT_ACK_WAIT));
     exit_code
 }
 
