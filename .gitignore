@@ -1,0 +1,14 @@
+# Rust (Cargo.lock stays tracked: workspace ships binaries)
+/target
+
+# Python control plane
+__pycache__/
+*.pyc
+.venv/
+.env
+
+# Local-only planning material (never in the public submission repo)
+/private/
+
+# OS
+.DS_Store
