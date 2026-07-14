@@ -12,6 +12,7 @@ use std::process::Output;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::SystemTime;
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
@@ -261,6 +262,27 @@ struct PoolState {
 struct ReadyUnit {
     snapshot: TemporaryTree,
     container_name: String,
+    record: SnapshotRecord,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct WorkspaceFingerprint {
+    file_count: usize,
+    newest_modified: Option<SystemTime>,
+}
+
+#[derive(Clone, Debug)]
+struct SnapshotRecord {
+    created_at: SystemTime,
+    workspace: WorkspaceFingerprint,
+}
+
+impl ReadyUnit {
+    fn is_fresh_for(&self, workspace_root: &Path) -> bool {
+        workspace_fingerprint(workspace_root)
+            .map(|current| current == self.record.workspace)
+            .unwrap_or(false)
+    }
 }
 
 impl PooledTwin {
@@ -291,6 +313,15 @@ impl PooledTwin {
             schedule_replenish(Arc::clone(&self.pool), Arc::clone(&self.fallback));
             return self.fallback.speculate(command, cwd).await;
         };
+        if !ready.is_fresh_for(&self.fallback.workspace_root) {
+            tracing::debug!(
+                snapshot_created = ?ready.record.created_at,
+                "discarding stale pooled twin snapshot"
+            );
+            destroy_ready_unit(ready).await;
+            schedule_replenish(Arc::clone(&self.pool), Arc::clone(&self.fallback));
+            return self.fallback.speculate(command, cwd).await;
+        }
         schedule_replenish(Arc::clone(&self.pool), Arc::clone(&self.fallback));
 
         let command_string = render_command(command);
@@ -404,6 +435,10 @@ async fn invalidate_pool(pool: Arc<Mutex<PoolState>>, fallback: Arc<DockerTwin>)
 async fn create_ready_unit(fallback: Arc<DockerTwin>) -> Option<ReadyUnit> {
     let snapshot = TemporaryTree::new("chaostwin-pool").ok()?;
     copy_workspace(&fallback.workspace_root, &snapshot.path).await.ok()?;
+    let record = SnapshotRecord {
+        created_at: SystemTime::now(),
+        workspace: workspace_fingerprint(&fallback.workspace_root).ok()?,
+    };
     let container_name = pool_container_name();
     let snapshot_mount = snapshot.path.to_string_lossy().to_string();
     let output = fallback
@@ -432,6 +467,7 @@ async fn create_ready_unit(fallback: Arc<DockerTwin>) -> Option<ReadyUnit> {
     Some(ReadyUnit {
         snapshot,
         container_name,
+        record,
     })
 }
 
@@ -645,6 +681,39 @@ fn walk_files_inner(
     Ok(())
 }
 
+/// A metadata-only walk is cheap relative to starting a Docker container and
+/// catches direct editor writes that never produce a daemon report.
+fn workspace_fingerprint(root: &Path) -> io::Result<WorkspaceFingerprint> {
+    let mut fingerprint = WorkspaceFingerprint {
+        file_count: 0,
+        newest_modified: None,
+    };
+    collect_workspace_fingerprint(root, &mut fingerprint)?;
+    Ok(fingerprint)
+}
+
+fn collect_workspace_fingerprint(
+    current: &Path,
+    fingerprint: &mut WorkspaceFingerprint,
+) -> io::Result<()> {
+    for entry in fs::read_dir(current)? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            collect_workspace_fingerprint(&entry.path(), fingerprint)?;
+            continue;
+        }
+        fingerprint.file_count += 1;
+        let modified = entry.metadata()?.modified()?;
+        if fingerprint
+            .newest_modified
+            .is_none_or(|newest| modified > newest)
+        {
+            fingerprint.newest_modified = Some(modified);
+        }
+    }
+    Ok(())
+}
+
 fn same_file(left: &Path, right: &Path) -> io::Result<bool> {
     let left_metadata = fs::metadata(left)?;
     let right_metadata = fs::metadata(right)?;
@@ -817,6 +886,36 @@ mod tests {
                 assert!(effects.deletes.contains(&current));
             }
             TwinOutcome::NeedsHuman(reason) => panic!("pooled twin used stale state: {reason:?}"),
+        }
+
+        twin.shutdown_pool().await;
+        wait_for_pool_cleanup().await;
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Docker Desktop and an alpine image"]
+    async fn pooled_twin_discards_snapshot_after_out_of_band_workspace_edit() {
+        let root = std::env::temp_dir().join(format!(
+            "chaostwin-pool-out-of-band-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let twin = PooledTwin::new(root.clone());
+        twin.start();
+        wait_for_ready(&twin).await;
+
+        let current = root.join("created-outside-chaosd.txt");
+        fs::write(&current, "written by an editor, not a report message").unwrap();
+
+        let command = simple_command(&["rm", "created-outside-chaosd.txt"]);
+        match twin.speculate(&command, &root).await {
+            TwinOutcome::Effects(effects) => {
+                assert!(effects.deletes.contains(&current));
+            }
+            TwinOutcome::NeedsHuman(reason) => {
+                panic!("pooled twin did not refresh after an out-of-band edit: {reason:?}")
+            }
         }
 
         twin.shutdown_pool().await;

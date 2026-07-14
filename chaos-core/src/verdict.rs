@@ -78,12 +78,21 @@ pub fn check(effects: &Effects, contract: &Contract, history: &History) -> Verdi
             ));
         }
     }
-    for path in effects.writes.iter().chain(&effects.deletes) {
+    for path in &effects.writes {
         if !contract.allowed_paths.is_match(path) {
             proofs.push(trace(
                 "R-PATH-01",
                 "path matches allowed_paths",
                 format!("{} modifies {}", command_label(effects), path.display()),
+            ));
+        }
+    }
+    for path in &effects.deletes {
+        if !contract.allowed_paths.is_match(path) {
+            proofs.push(trace(
+                "R-PATH-01",
+                "path matches allowed_paths",
+                format!("{} deletes {}", command_label(effects), path.display()),
             ));
         }
     }
@@ -334,6 +343,9 @@ mod tests {
         assert!(proofs
             .iter()
             .all(|proof| proof.rendered.contains("rm(recursive,forced)")));
+        assert!(proofs
+            .iter()
+            .any(|proof| proof.effect.contains(" deletes ")));
     }
 
     #[test]

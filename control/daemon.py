@@ -22,7 +22,7 @@ def default_socket_path() -> Path:
     runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
     if runtime_dir:
         return Path(runtime_dir) / "chaostwin.sock"
-    return Path(f"/tmp/chaostwin-{os.environ.get('UID', '0')}.sock")
+    return Path(f"/tmp/chaostwin-{os.getuid()}.sock")
 
 
 class DaemonClient:

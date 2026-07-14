@@ -312,7 +312,7 @@ fn split_top_level(raw: &str) -> Result<Vec<Segment>, String> {
             }
             Some(b'"') => {
                 if byte == b'\\' {
-                    index += 2;
+                    index = (index + 2).min(bytes.len());
                 } else {
                     if byte == b'"' {
                         quote = None;
@@ -410,7 +410,7 @@ fn extract_redirects(segment: &str) -> Result<Redirects, String> {
         }
 
         if byte == b'\\' {
-            index += 2;
+            index = (index + 2).min(bytes.len());
             continue;
         }
         if matches!(byte, b'\'' | b'"') {
@@ -483,7 +483,7 @@ fn shell_word_end(bytes: &[u8], mut index: usize) -> Result<usize, String> {
             }
             Some(b'"') => {
                 if byte == b'\\' {
-                    index += 2;
+                    index = (index + 2).min(bytes.len());
                 } else {
                     if byte == b'"' {
                         quote = None;
@@ -492,7 +492,7 @@ fn shell_word_end(bytes: &[u8], mut index: usize) -> Result<usize, String> {
                 }
             }
             Some(_) => unreachable!(),
-            None if byte == b'\\' => index += 2,
+            None if byte == b'\\' => index = (index + 2).min(bytes.len()),
             None if matches!(byte, b'\'' | b'"') => {
                 quote = Some(byte);
                 index += 1;
@@ -556,6 +556,11 @@ mod tests {
 
         assert_eq!(parsed[0].argv, ["cargo", "run"]);
         assert_eq!(parsed[0].redirect_writes, [PathBuf::from("out.txt")]);
+    }
+
+    #[test]
+    fn trailing_redirect_escape_is_opaque_instead_of_panicking() {
+        assert!(matches!(parse("<\\"), ParseOutcome::Opaque(_)));
     }
 
     #[test]

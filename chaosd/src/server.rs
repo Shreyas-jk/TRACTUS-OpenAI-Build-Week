@@ -40,12 +40,7 @@ impl ServerConfig {
 }
 
 pub fn default_socket_path() -> PathBuf {
-    if let Some(runtime_dir) = std::env::var_os("XDG_RUNTIME_DIR") {
-        return PathBuf::from(runtime_dir).join("chaostwin.sock");
-    }
-
-    let uid = std::env::var("UID").unwrap_or_else(|_| "0".to_owned());
-    PathBuf::from(format!("/tmp/chaostwin-{uid}.sock"))
+    crate::socket_path::default_socket_path()
 }
 
 pub fn bind_default_listener() -> io::Result<UnixListener> {

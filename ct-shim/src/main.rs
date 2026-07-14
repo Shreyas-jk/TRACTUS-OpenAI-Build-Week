@@ -3,9 +3,11 @@ use std::collections::HashMap;
 use std::env;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
 use std::process::{self, Command};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+#[path = "../../chaostwin_socket.rs"]
+mod socket_path;
 
 const DAEMON_UNREACHABLE: &str =
     "Chaos Twin daemon unreachable; command not executed. Start chaosd or unset SHELL.";
@@ -66,7 +68,7 @@ enum Response {
 }
 
 fn request_verdict(command: &str) -> Result<ShimVerdict, ()> {
-    let socket_path = socket_path();
+    let socket_path = socket_path::default_socket_path();
     let mut connection = UnixStream::connect(socket_path).map_err(|_| ())?;
     connection.set_read_timeout(Some(HOLD_WAIT)).map_err(|_| ())?;
     connection.set_write_timeout(Some(Duration::from_secs(5))).map_err(|_| ())?;
@@ -135,20 +137,6 @@ fn write_json(connection: &mut UnixStream, value: &Value) -> Result<(), ()> {
     connection.write_all(encoded.as_bytes()).map_err(|_| ())?;
     connection.write_all(b"\n").map_err(|_| ())?;
     connection.flush().map_err(|_| ())
-}
-
-fn socket_path() -> PathBuf {
-    env::var_os("CHAOSTWIN_SOCK")
-        .map(PathBuf::from)
-        .unwrap_or_else(default_socket_path)
-}
-
-fn default_socket_path() -> PathBuf {
-    if let Some(runtime_dir) = env::var_os("XDG_RUNTIME_DIR") {
-        return PathBuf::from(runtime_dir).join("chaostwin.sock");
-    }
-    let uid = env::var("UID").unwrap_or_else(|_| "0".to_owned());
-    PathBuf::from(format!("/tmp/chaostwin-{uid}.sock"))
 }
 
 fn command_id() -> String {
