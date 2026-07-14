@@ -19,7 +19,7 @@ use tokio::time::{timeout, Duration};
 const TWIN_TIMEOUT: Duration = Duration::from_secs(3);
 const OVERLAY_UNAVAILABLE: &str = "CHAOSTWIN_OVERLAY_UNAVAILABLE";
 pub const TWIN_CONTAINER_PREFIX: &str = "chaostwin-twin-";
-const POOL_CONTAINER_PREFIX: &str = "chaostwin-pool-";
+pub const POOL_CONTAINER_PREFIX: &str = "chaostwin-pool-";
 static NEXT_TWIN: AtomicUsize = AtomicUsize::new(0);
 
 pub enum TwinOutcome {
@@ -277,7 +277,12 @@ impl PooledTwin {
 
     pub fn start(&self) {
         self.fallback.spawn_warmup();
-        schedule_replenish(Arc::clone(&self.pool), Arc::clone(&self.fallback));
+        let pool = Arc::clone(&self.pool);
+        let fallback = Arc::clone(&self.fallback);
+        tokio::spawn(async move {
+            reap_orphaned_containers().await;
+            schedule_replenish(pool, fallback);
+        });
     }
 
     async fn speculate_inner(&self, command: &SimpleCommand, cwd: &Path) -> TwinOutcome {
@@ -439,6 +444,31 @@ async fn destroy_ready_unit(unit: ReadyUnit) {
         .output()
         .await;
     drop(unit);
+}
+
+pub async fn reap_orphaned_containers() {
+    let Ok(output) = Command::new("docker")
+        .args(["ps", "--format", "{{.Names}}"])
+        .output()
+        .await
+    else {
+        tracing::debug!("Docker unavailable while reaping Chaos Twin containers");
+        return;
+    };
+    for name in String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|name| {
+            name.starts_with(POOL_CONTAINER_PREFIX) || name.starts_with(TWIN_CONTAINER_PREFIX)
+        })
+    {
+        let _ = Command::new("docker")
+            .arg("kill")
+            .arg(name)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .await;
+    }
 }
 
 enum TwinError {
@@ -792,5 +822,37 @@ mod tests {
         twin.shutdown_pool().await;
         wait_for_pool_cleanup().await;
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Docker Desktop and an alpine image"]
+    async fn orphan_reaper_kills_a_named_pool_container() {
+        reap_orphaned_containers().await;
+        let fake_name = "chaostwin-pool-99999-0";
+        let started = Command::new("docker")
+            .args([
+                "run",
+                "-d",
+                "--rm",
+                "--name",
+                fake_name,
+                "alpine:3.20",
+                "sleep",
+                "infinity",
+            ])
+            .output()
+            .await
+            .unwrap();
+        assert!(started.status.success());
+
+        reap_orphaned_containers().await;
+        let names = Command::new("docker")
+            .args(["ps", "--format", "{{.Names}}"])
+            .output()
+            .await
+            .unwrap();
+        assert!(!String::from_utf8_lossy(&names.stdout)
+            .lines()
+            .any(|name| name == fake_name));
     }
 }
