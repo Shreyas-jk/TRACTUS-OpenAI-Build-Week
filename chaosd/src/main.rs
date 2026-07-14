@@ -1,6 +1,6 @@
 use chaosd::server::{bind_default_listener, serve, ServerConfig};
 use chaosd::state::shared_state;
-use chaosd::twin::NoTwin;
+use chaosd::twin::DockerTwin;
 use std::sync::Arc;
 
 #[tokio::main(flavor = "current_thread")]
@@ -11,8 +11,8 @@ async fn main() {
     let workspace_root = std::env::current_dir().expect("read workspace root");
     let config = Arc::new(ServerConfig::new(
         shared_state(),
-        workspace_root,
-        Arc::new(NoTwin),
+        workspace_root.clone(),
+        Arc::new(DockerTwin::new(workspace_root)),
     ));
 
     if let Err(error) = serve(listener, config).await {
