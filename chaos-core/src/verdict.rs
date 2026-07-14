@@ -1,5 +1,5 @@
 use crate::classify::Classification;
-use crate::contract::{Contract, Effects, ProofTrace, Reason, Verdict};
+use crate::contract::{Contract, Effects, ProofTrace, Verdict};
 use crate::history::History;
 use crate::parse::{normalize_path, SimpleCommand};
 use std::path::Path;
@@ -161,7 +161,7 @@ pub fn combine_verdicts(verdicts: impl IntoIterator<Item = Verdict>) -> Verdict 
 mod tests {
     use super::*;
     use crate::classify::classify;
-    use crate::contract::{ContractSpec, GitOp, GitOpSet, OpClass, OpSet};
+    use crate::contract::{ContractSpec, GitOp, GitOpSet, OpClass, OpSet, Reason};
     use crate::parse::{parse, ParseOutcome};
     use insta::assert_snapshot;
     use std::path::{Path, PathBuf};
@@ -177,7 +177,7 @@ mod tests {
 
     fn example_contract() -> Contract {
         let mut allowed_ops = OpSet::empty();
-        for operation in [OpClass::Read, OpClass::Edit, OpClass::Test] {
+        for operation in [OpClass::Read, OpClass::Edit, OpClass::Test, OpClass::Build] {
             allowed_ops.insert(operation);
         }
         let mut git_ops = GitOpSet::empty();
@@ -186,7 +186,11 @@ mod tests {
         }
         ContractSpec {
             task: "fix the failing test in tests/api_test.rs".to_owned(),
-            allowed_paths: vec!["tests/**".to_owned(), "src/api/**".to_owned()],
+            allowed_paths: vec![
+                "tests/**".to_owned(),
+                "src/api/**".to_owned(),
+                "target/**".to_owned(),
+            ],
             allowed_ops,
             deps_may_change: false,
             git_ops,

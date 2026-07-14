@@ -3,13 +3,13 @@ source: chaos-core/src/verdict.rs
 expression: matrix
 ---
 cargo build
-  example: R-PATH-01,R-OP-01
+  example: IN_SCOPE
   permissive: IN_SCOPE
 cargo test
-  example: R-PATH-01
+  example: IN_SCOPE
   permissive: IN_SCOPE
 cargo run
-  example: R-PATH-01,R-OP-01
+  example: R-OP-01
   permissive: IN_SCOPE
 cargo add axios
   example: R-NET-01,R-DEP-01,R-PATH-01,R-PATH-01

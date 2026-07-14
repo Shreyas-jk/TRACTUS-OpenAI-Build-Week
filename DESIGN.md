@@ -20,13 +20,18 @@ No existing tool checks agent actions against *what the user asked for*. Approva
    ```json
    {
      "task": "fix the failing test in tests/api_test.rs",
-     "allowed_paths": ["tests/**", "src/api/**"],
-     "allowed_ops": ["read", "edit", "test"],
+     "allowed_paths": ["tests/**", "src/api/**", "target/**"],
+     "allowed_ops": ["read", "edit", "test", "build"],
      "deps_may_change": false,
      "git_ops": ["status", "diff"],
      "network": false
    }
    ```
+   The extraction prompt always includes the project's build-artifact directories (`target/`,
+   `node_modules/`, `__pycache__/`, `.venv/`) in `allowed_paths`; otherwise every test or build
+   command false-blocks on artifact writes. Likewise, any code-editing task implies the `test`
+   and `build` op grants; `run` stays a separate, explicit grant. Artifact paths and implied ops
+   are listed in the toggle card but pre-checked and visually de-emphasized.
 2. **Confirm.** No raw JSON in front of the user. The UI renders the contract as a plain-language card with toggles: "May edit files in: `tests/`, `src/api/`" (editable path chips), "May change dependencies: OFF", "May access network: OFF", "Git: read-only". One click approves; flipping a toggle amends the contract. From here on, no LLM is in the enforcement path.
 3. **Enforce.** The Rust engine checks every proposed command, and every observed twin diff, against the contract. Deterministically: same input, same verdict, always.
 

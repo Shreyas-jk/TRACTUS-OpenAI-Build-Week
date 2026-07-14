@@ -149,6 +149,16 @@ impl ContractSpec {
                 message: error.to_string(),
             })?;
             allowed_paths.add(glob);
+
+            if let Some(directory) = pattern.strip_suffix("/**") {
+                let directory = workspace_root.join(directory);
+                let directory = directory.to_string_lossy();
+                let glob = Glob::new(&directory).map_err(|error| ContractError::InvalidGlob {
+                    pattern: pattern.clone(),
+                    message: error.to_string(),
+                })?;
+                allowed_paths.add(glob);
+            }
         }
 
         let allowed_paths = allowed_paths.build().map_err(|error| ContractError::BuildGlobSet {
@@ -243,6 +253,17 @@ mod tests {
             invalid.compile("/workspace/project"),
             Err(ContractError::InvalidGlob { .. })
         ));
+    }
+
+    #[test]
+    fn directory_glob_also_matches_its_root() {
+        let mut artifact_spec = spec();
+        artifact_spec.allowed_paths = vec!["target/**".to_owned()];
+        let contract = artifact_spec.compile("/workspace/project").unwrap();
+
+        assert!(contract
+            .allowed_paths
+            .is_match("/workspace/project/target"));
     }
 
     #[test]
