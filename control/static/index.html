@@ -3,85 +3,418 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Chaos Twin</title>
+  <title>Chaos Twin · Firewall Console</title>
   <style>
-    :root { color-scheme: dark; font-family: ui-sans-serif, system-ui, sans-serif; }
-    body { max-width: 920px; margin: 2rem auto; padding: 0 1rem; background: #101218; color: #ecf0f8; }
-    h1 { margin-bottom: .25rem; } .muted { color: #9da7b8; }
-    form, section { background: #181c25; border: 1px solid #2c3444; border-radius: .7rem; padding: 1rem; margin: 1rem 0; }
-    input[type="text"] { box-sizing: border-box; width: 100%; background: #0d1016; border: 1px solid #3a465c; color: inherit; border-radius: .4rem; padding: .7rem; }
-    button { cursor: pointer; border: 0; border-radius: .4rem; padding: .55rem .8rem; margin-top: .65rem; background: #7dd3fc; color: #082f49; font-weight: 700; }
-    .group { border-top: 1px solid #30394a; margin-top: .75rem; padding-top: .75rem; }
-    .row { display: flex; align-items: center; gap: .5rem; padding: .2rem 0; }
-    .de-emphasized { opacity: .58; } .value { font-family: ui-monospace, SFMono-Regular, monospace; }
-    #events { display: grid; gap: .65rem; } .event { background: #0d1016; border-radius: .45rem; padding: .7rem; }
-    .chip { display: inline-block; border-radius: 999px; padding: .1rem .5rem; font-size: .78rem; font-weight: 800; margin-right: .4rem; }
-    .allow { background: #14532d; color: #bbf7d0; } .block { background: #7f1d1d; color: #fecaca; } .hold { background: #78350f; color: #fde68a; }
-    pre { white-space: pre-wrap; margin: .5rem 0 0; color: #c9d4e8; } .actions button { margin-right: .4rem; }
+    :root {
+      color-scheme: dark;
+      --bg: #0A0F14;
+      --panel: #10161E;
+      --inset: #0C1218;
+      --line: #1D2735;
+      --ink: #E6EDF5;
+      --muted: #7E8CA0;
+      --accent: #6EE7F0;
+      --allow: #34C46B;
+      --block: #F25555;
+      --hold: #E0AE3F;
+      --loop: #9D8CFF;
+      --mono: ui-monospace, "SFMono-Regular", "Cascadia Code", "Roboto Mono", Menlo, monospace;
+      --sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--bg); }
+    body {
+      margin: 0;
+      min-width: 320px;
+      background:
+        linear-gradient(90deg, rgba(110, 231, 240, .025) 1px, transparent 1px) 0 0 / 48px 48px,
+        linear-gradient(rgba(110, 231, 240, .02) 1px, transparent 1px) 0 0 / 48px 48px,
+        var(--bg);
+      color: var(--ink);
+      font-family: var(--mono);
+    }
+
+    button, input { font: inherit; }
+    button { cursor: pointer; }
+    button:focus-visible, input:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+    [hidden] { display: none !important; }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 52px;
+      padding: 0 max(20px, calc((100vw - 1440px) / 2));
+      border-bottom: 1px solid var(--line);
+      background: rgba(10, 15, 20, .94);
+      backdrop-filter: blur(12px);
+    }
+
+    .wordmark { letter-spacing: .13em; font-size: .83rem; font-weight: 800; white-space: nowrap; }
+    .wordmark__twin { color: transparent; -webkit-text-stroke: 1px var(--accent); text-stroke: 1px var(--accent); }
+    .status-list { display: flex; align-items: center; gap: clamp(9px, 2vw, 22px); color: var(--muted); font-size: .66rem; letter-spacing: .06em; text-transform: uppercase; }
+    .status { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); box-shadow: 0 0 0 3px rgba(126, 140, 160, .08); }
+    .status[data-state="online"] .status-dot { background: var(--allow); box-shadow: 0 0 0 3px rgba(52, 196, 107, .12), 0 0 11px rgba(52, 196, 107, .65); }
+    .status[data-state="offline"] .status-dot { background: var(--block); box-shadow: 0 0 0 3px rgba(242, 85, 85, .10); }
+    .status[data-state="warming"] .status-dot { background: var(--hold); box-shadow: 0 0 0 3px rgba(224, 174, 63, .10); }
+
+    .console {
+      display: grid;
+      grid-template-columns: 330px minmax(0, 1fr);
+      gap: clamp(18px, 3vw, 42px);
+      width: min(1440px, 100%);
+      margin: 0 auto;
+      padding: 26px max(20px, 3vw) 64px;
+    }
+
+    .contract-column { position: sticky; top: 72px; align-self: start; }
+    .contract-shell, .event-card { border: 1px solid var(--line); background: var(--panel); }
+    .contract-shell { min-height: 248px; padding: 18px; }
+    .eyebrow, .section-kicker { color: var(--accent); font-size: .62rem; font-weight: 700; letter-spacing: .13em; text-transform: uppercase; }
+    .task-form__title { margin: 12px 0 8px; font-family: var(--sans); font-size: 1.08rem; font-weight: 650; letter-spacing: -.02em; }
+    .task-form__copy, .task-status { margin: 0; color: var(--muted); font-size: .75rem; line-height: 1.55; }
+    .task-form__input {
+      width: 100%;
+      min-height: 96px;
+      resize: vertical;
+      margin: 16px 0 10px;
+      padding: 11px;
+      border: 1px solid var(--line);
+      border-radius: 0;
+      background: var(--inset);
+      color: var(--ink);
+      font-family: var(--mono);
+      font-size: .76rem;
+      line-height: 1.45;
+    }
+    .button {
+      border: 1px solid var(--accent);
+      border-radius: 0;
+      padding: 8px 10px;
+      background: var(--accent);
+      color: #062126;
+      font-size: .69rem;
+      font-weight: 800;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    .button:hover { filter: brightness(1.08); }
+    .button:disabled { cursor: wait; opacity: .6; }
+    .button--quiet { border-color: var(--line); background: transparent; color: var(--ink); }
+    .button--approve { border-color: rgba(52, 196, 107, .8); background: rgba(52, 196, 107, .12); color: var(--allow); }
+    .button--reject { border-color: rgba(242, 85, 85, .8); background: rgba(242, 85, 85, .12); color: var(--block); }
+
+    .contract-card__task { margin: 11px 0 8px; font-family: var(--sans); font-size: 1rem; font-weight: 620; line-height: 1.38; }
+    .contract-card__task::before, .contract-card__task::after { color: var(--accent); }
+    .contract-card__state { margin: 0 0 16px; color: var(--allow); font-size: .64rem; letter-spacing: .035em; text-transform: uppercase; }
+    .contract-card__state[data-pending="true"] { color: var(--hold); }
+    .contract-group { margin-top: 13px; padding-top: 12px; border-top: 1px solid var(--line); }
+    .contract-group__label { margin-bottom: 8px; color: var(--muted); font-family: var(--sans); font-size: .67rem; font-weight: 650; letter-spacing: .025em; }
+    .chip-list { display: flex; flex-wrap: wrap; gap: 6px; }
+    .contract-chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 25px;
+      border: 1px solid var(--accent);
+      padding: 3px 6px;
+      background: rgba(110, 231, 240, .035);
+      color: var(--ink);
+      font-family: var(--mono);
+      font-size: .65rem;
+      line-height: 1;
+    }
+    .contract-chip--disabled { border-style: dashed; border-color: var(--muted); background: transparent; color: var(--muted); opacity: .58; }
+    .contract-chip--deemphasized { opacity: .5; }
+    .contract-chip input { position: absolute; inline-size: 1px; block-size: 1px; opacity: 0; pointer-events: none; }
+    .contract-chip:has(input:focus-visible) { outline: 1px solid var(--accent); outline-offset: 2px; }
+    .toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .toggle-row__label { color: var(--ink); font-size: .67rem; }
+    .pill-switch {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      width: 50px;
+      height: 23px;
+      border: 1px solid var(--muted);
+      background: transparent;
+      color: var(--muted);
+      font-size: .58rem;
+      line-height: 1;
+      text-align: left;
+    }
+    .pill-switch::after { content: "OFF"; padding-left: 5px; }
+    .pill-switch[data-enabled="true"] { border-color: var(--allow); color: var(--allow); background: rgba(52, 196, 107, .08); }
+    .pill-switch[data-enabled="true"]::after { content: "ON"; padding-left: 19px; }
+    .pill-switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+    .pill-switch__knob { position: absolute; left: 3px; width: 15px; height: 15px; background: var(--muted); transition: transform .16s ease, background .16s ease; }
+    .pill-switch[data-enabled="true"] .pill-switch__knob { background: var(--allow); transform: translateX(27px); }
+    .contract-footer { margin: 17px 0 0; padding-top: 11px; border-top: 1px solid var(--line); color: var(--muted); font-size: .59rem; line-height: 1.55; }
+    .contract-actions { display: flex; gap: 8px; margin-top: 15px; }
+
+    .ledger { min-width: 0; }
+    .ledger-header { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin: 2px 0 16px; padding-bottom: 13px; border-bottom: 1px solid var(--line); }
+    .ledger-title { margin: 5px 0 0; font-family: var(--sans); font-size: clamp(1.35rem, 2vw, 1.8rem); font-weight: 650; letter-spacing: -.035em; }
+    .counters { display: flex; flex-wrap: wrap; justify-content: end; gap: 10px; font-size: .66rem; text-transform: uppercase; }
+    .counter { display: inline-flex; gap: 5px; color: var(--muted); }
+    .counter strong { font-weight: 800; }
+    .counter--allow strong { color: var(--allow); } .counter--block strong { color: var(--block); } .counter--hold strong { color: var(--hold); }
+    .ledger-empty { margin: 0; padding: 28px 0; color: var(--muted); font-size: .75rem; line-height: 1.55; }
+    .event-list { display: grid; gap: 10px; }
+    .event-card {
+      position: relative;
+      border-left: 3px solid var(--muted);
+      padding: 14px 15px 15px;
+      overflow: hidden;
+      animation: event-arrival .22s ease-out both;
+    }
+    .event-card--allow { border-left-color: var(--allow); }
+    .event-card--block { border-left-color: var(--block); }
+    .event-card--hold { border-left-color: var(--hold); }
+    .event-card--loop { border-left-color: var(--loop); }
+    .event-card__head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 9px; }
+    .verdict-chip { display: inline-flex; align-items: center; min-height: 21px; padding: 3px 6px; font-size: .58rem; font-weight: 800; letter-spacing: .09em; line-height: 1; text-transform: uppercase; }
+    .verdict-chip--allow { background: rgba(52, 196, 107, .12); color: var(--allow); }
+    .verdict-chip--block { background: rgba(242, 85, 85, .12); color: var(--block); }
+    .verdict-chip--hold { background: rgba(224, 174, 63, .12); color: var(--hold); }
+    .verdict-chip--loop { background: rgba(157, 140, 255, .12); color: var(--loop); }
+    .event-card__command { min-width: 0; padding-top: 2px; overflow-wrap: anywhere; color: var(--ink); font-size: .74rem; line-height: 1.35; }
+    .event-card__meta { display: flex; flex-direction: column; align-items: end; gap: 3px; color: var(--muted); font-size: .57rem; line-height: 1.25; text-align: right; white-space: nowrap; }
+    .event-card__twin { color: var(--accent); }
+    .proofs { margin: 13px 0 0; padding: 10px; overflow-x: auto; border: 1px solid var(--line); background: var(--inset); color: var(--ink); font: .66rem/1.6 var(--mono); white-space: pre-wrap; }
+    .proof-rule { color: var(--block); font-weight: 800; } .proof-op { color: var(--accent); font-weight: 800; }
+    .returned-agent { margin-top: 11px; padding: 9px 10px; border-left: 2px solid var(--muted); background: rgba(126, 140, 160, .055); }
+    .returned-agent__label { display: block; margin-bottom: 4px; color: var(--muted); font-size: .57rem; font-weight: 800; letter-spacing: .09em; }
+    .returned-agent__text { color: #b7c2d2; font-size: .65rem; line-height: 1.5; white-space: pre-wrap; }
+    .explainer { margin: 11px 0 0; color: #b8c3d2; font-family: var(--sans); font-size: .78rem; font-style: italic; line-height: 1.5; }
+    .advisory-tag { display: inline-block; margin-right: 7px; padding: 2px 4px; border: 1px solid var(--line); color: var(--muted); font-family: var(--mono); font-size: .54rem; font-style: normal; letter-spacing: .035em; text-transform: uppercase; vertical-align: 1px; }
+    .event-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 13px; }
+    .event-resolution { margin: 12px 0 0; color: var(--muted); font-size: .63rem; text-transform: uppercase; }
+    .clause-flash { animation: clause-flash .44s ease-in-out 3; }
+
+    @keyframes event-arrival { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes clause-flash { 0%, 100% { border-color: var(--line); box-shadow: none; } 50% { border-color: var(--block); box-shadow: 0 0 0 1px var(--block), inset 0 0 22px rgba(242, 85, 85, .12); } }
+    @media (max-width: 880px) {
+      .console { grid-template-columns: minmax(0, 1fr); padding-top: 18px; }
+      .contract-column { position: static; }
+      .ledger { grid-row: 1; }
+      .contract-column { grid-row: 2; }
+    }
+    @media (max-width: 600px) {
+      .topbar { padding-inline: 14px; }
+      .status-list { gap: 9px; font-size: .56rem; }
+      .console { padding-inline: 14px; }
+      .ledger-header { align-items: start; flex-direction: column; gap: 10px; }
+      .counters { justify-content: start; }
+      .event-card__head { grid-template-columns: auto minmax(0, 1fr); }
+      .event-card__meta { grid-column: 2; align-items: start; text-align: left; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+    }
   </style>
 </head>
 <body>
-  <h1>Chaos Twin</h1>
-  <p class="muted">Intent contract control plane</p>
+  <header class="topbar">
+    <div class="wordmark" aria-label="Chaos Twin"><span>CHAOS</span><span class="wordmark__twin">TWIN</span></div>
+    <div class="status-list" aria-label="System status">
+      <span class="status" id="status-daemon" data-state="offline"><i class="status-dot"></i>daemon</span>
+      <span class="status" id="status-twin" data-state="offline"><i class="status-dot"></i>twin</span>
+      <span class="status" id="status-session" data-state="offline"><i class="status-dot"></i>session</span>
+    </div>
+  </header>
 
-  <form id="task-form">
-    <label for="task-request">What should the coding agent do?</label>
-    <input id="task-request" type="text" required placeholder="Fix the failing test in tests/api_test.rs">
-    <button type="submit">Create contract</button>
-    <p id="task-status" class="muted" aria-live="polite"></p>
-  </form>
+  <main class="console">
+    <aside class="contract-column" aria-label="Intent contract">
+      <section class="contract-shell" id="contract-shell">
+        <form id="task-form">
+          <div class="eyebrow">Intent contract</div>
+          <h1 class="task-form__title">Define the agent’s scope.</h1>
+          <p class="task-form__copy">Chaos Twin extracts a contract before the deterministic firewall enforces it.</p>
+          <textarea class="task-form__input" id="task-request" required placeholder="Fix the failing test in tests/api_test.rs. Do not change dependencies or use the network."></textarea>
+          <button class="button" type="submit">Create contract</button>
+          <p class="task-status" id="task-status" aria-live="polite"></p>
+        </form>
+        <section id="contract-section" hidden></section>
+      </section>
+    </aside>
 
-  <section id="contract-section" hidden>
-    <h2>Approved scope</h2>
-    <p id="contract-task" class="muted"></p>
-    <div id="contract-card"></div>
-    <button id="confirm-contract">Confirm contract</button>
-  </section>
-
-  <section>
-    <h2>Live enforcement events</h2>
-    <div id="events" aria-live="polite"></div>
-  </section>
+    <section class="ledger" aria-labelledby="ledger-title">
+      <header class="ledger-header">
+        <div>
+          <div class="section-kicker">Live policy decisions</div>
+          <h2 class="ledger-title" id="ledger-title">Enforcement ledger</h2>
+        </div>
+        <div class="counters" aria-label="Verdict counters">
+          <span class="counter counter--allow"><strong id="count-allow">0</strong> allowed</span>
+          <span class="counter counter--block"><strong id="count-block">0</strong> blocked</span>
+          <span class="counter counter--hold"><strong id="count-hold">0</strong> held</span>
+        </div>
+      </header>
+      <p class="ledger-empty" id="ledger-empty">Awaiting daemon decisions. Every command is checked against the confirmed intent contract.</p>
+      <div class="event-list" id="events" aria-live="polite"></div>
+    </section>
+  </main>
 
   <script>
-    const state = { contract: null, events: new Map() };
+    const state = {
+      contract: null,
+      confirmed: false,
+      events: new Map(),
+      eventModels: new Map(),
+      commands: new Map(),
+      countedVerdicts: new Map(),
+      counts: { allow: 0, block: 0, hold: 0 },
+    };
+
     const operations = ["read", "edit", "create", "delete", "test", "build", "run"];
     const gitOperations = ["status", "diff", "log", "add", "commit", "checkout", "push", "force_push", "reset_hard", "clean"];
+    const $ = (selector) => document.querySelector(selector);
 
-    document.querySelector("#task-form").addEventListener("submit", async (event) => {
+    $("#task-form").addEventListener("submit", async (event) => {
       event.preventDefault();
-      const status = document.querySelector("#task-status");
+      const status = $("#task-status");
+      const button = event.currentTarget.querySelector("button");
+      button.disabled = true;
       status.textContent = "Extracting least-privilege scope…";
-      const response = await fetch("/task", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ request: document.querySelector("#task-request").value }) });
-      if (!response.ok) { status.textContent = "Could not create a contract."; return; }
-      const card = await response.json();
-      state.contract = card.contract;
-      renderContract(card);
-      status.textContent = "Review the pre-checked contract, then confirm it.";
-    });
-
-    document.querySelector("#confirm-contract").addEventListener("click", async () => {
-      const response = await fetch("/contract/confirm", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ contract: state.contract }) });
-      document.querySelector("#task-status").textContent = response.ok ? "Contract sent to chaosd." : "chaosd did not accept the contract.";
+      try {
+        const response = await fetch("/task", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ request: $("#task-request").value }),
+        });
+        if (!response.ok) {
+          status.textContent = response.status === 503
+            ? "OpenAI credentials are unavailable."
+            : "Could not create a contract.";
+          return;
+        }
+        const card = await response.json();
+        state.contract = card.contract;
+        state.confirmed = false;
+        renderContract(card);
+      } catch (_) {
+        status.textContent = "Control plane is unreachable.";
+      } finally {
+        button.disabled = false;
+      }
     });
 
     function renderContract(card) {
-      document.querySelector("#contract-section").hidden = false;
-      document.querySelector("#contract-task").textContent = card.contract.task;
-      const root = document.querySelector("#contract-card"); root.replaceChildren();
+      const section = $("#contract-section");
+      section.replaceChildren();
+      const eyebrow = element("div", "eyebrow", "Intent contract");
+      const task = element("p", "contract-card__task", `“${card.contract.task}”`);
+      const stateLine = element(
+        "p",
+        "contract-card__state",
+        state.confirmed ? "Confirmed · enforced deterministically" : "Review required · not yet enforced",
+      );
+      stateLine.dataset.pending = String(!state.confirmed);
+      section.append(eyebrow, task, stateLine);
+
       for (const group of card.groups) {
-        const section = document.createElement("div"); section.className = "group";
-        section.innerHTML = `<strong>${group.label}</strong>`;
-        for (const clause of group.clauses) {
-          const row = document.createElement("label"); row.className = `row ${clause.de_emphasized ? "de-emphasized" : ""}`;
-          const box = document.createElement("input"); box.type = "checkbox"; box.checked = clause.enabled;
-          box.addEventListener("change", () => amendContract(group.id, clause, box.checked));
-          const value = document.createElement("span"); value.className = "value";
-          value.textContent = typeof clause.value === "boolean" ? (clause.value ? "ON" : "OFF") : clause.value;
-          row.append(box, value); section.append(row);
-        }
-        root.append(section);
+        section.append(buildContractGroup(group));
       }
+
+      if (!state.confirmed) {
+        const actions = element("div", "contract-actions");
+        const confirm = element("button", "button", "Confirm contract");
+        confirm.type = "button";
+        confirm.addEventListener("click", confirmContract);
+        actions.append(confirm);
+        section.append(actions);
+      }
+      section.append(element("p", "contract-footer", "enforced by chaos-core · zero LLM calls in the blocking path"));
+      $("#task-form").hidden = true;
+      section.hidden = false;
+    }
+
+    function buildContractGroup(group) {
+      const section = element("section", "contract-group");
+      section.dataset.group = group.id;
+      section.append(element("div", "contract-group__label", group.label));
+
+      if (group.id === "dependencies" || group.id === "network") {
+        const clause = group.clauses[0];
+        const row = element("label", "toggle-row");
+        row.dataset.kind = clause.kind;
+        const label = element("span", "toggle-row__label", group.id === "dependencies" ? "Dependency changes" : "Network access");
+        const toggle = element("span", "pill-switch");
+        toggle.dataset.enabled = String(clause.enabled);
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.checked = clause.enabled;
+        input.setAttribute("aria-label", label.textContent);
+        input.addEventListener("change", () => {
+          amendContract(group.id, clause, input.checked);
+          toggle.dataset.enabled = String(input.checked);
+        });
+        toggle.append(element("span", "pill-switch__knob"), input);
+        row.append(label, toggle);
+        section.append(row);
+        return section;
+      }
+
+      const chips = element("div", "chip-list");
+      for (const clause of group.clauses) {
+        const chip = element("label", "contract-chip", clause.value);
+        chip.dataset.kind = clause.kind;
+        chip.dataset.value = String(clause.value).toLowerCase();
+        chip.classList.toggle("contract-chip--disabled", !clause.enabled);
+        chip.classList.toggle("contract-chip--deemphasized", clause.de_emphasized);
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.checked = clause.enabled;
+        input.setAttribute("aria-label", `${group.label}: ${clause.value}`);
+        input.addEventListener("change", () => {
+          amendContract(group.id, clause, input.checked);
+          chip.classList.toggle("contract-chip--disabled", !input.checked);
+        });
+        chip.prepend(input);
+        chips.append(chip);
+      }
+      section.append(chips);
+      return section;
+    }
+
+    async function confirmContract(event) {
+      const button = event.currentTarget;
+      button.disabled = true;
+      button.textContent = "Confirming…";
+      try {
+        const response = await fetch("/contract/confirm", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ contract: state.contract }),
+        });
+        if (!response.ok) {
+          button.textContent = "Daemon rejected contract";
+          return;
+        }
+        state.confirmed = true;
+        renderContract({ contract: state.contract, groups: rebuildGroupsFromContract() });
+      } catch (_) {
+        button.textContent = "Daemon unreachable";
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    function rebuildGroupsFromContract() {
+      const implied = state.contract.allowed_ops.includes("edit") ? new Set(["test", "build"]) : new Set();
+      const artifacts = new Set(["target/**", "node_modules/**", "**/__pycache__/**", ".venv/**"]);
+      return [
+        { id: "paths", label: "May edit files in", clauses: state.contract.allowed_paths.map((value) => ({ kind: "path", value, enabled: true, de_emphasized: artifacts.has(value) })) },
+        { id: "operations", label: "May perform", clauses: operations.map((value) => ({ kind: "operation", value, enabled: state.contract.allowed_ops.includes(value), de_emphasized: implied.has(value) })) },
+        { id: "dependencies", label: "May change dependencies", clauses: [{ kind: "deps_may_change", value: state.contract.deps_may_change, enabled: state.contract.deps_may_change, de_emphasized: false }] },
+        { id: "git", label: "Git permissions", clauses: gitOperations.map((value) => ({ kind: "git", value, enabled: state.contract.git_ops.includes(value), de_emphasized: false })) },
+        { id: "network", label: "May access network", clauses: [{ kind: "network", value: state.contract.network, enabled: state.contract.network, de_emphasized: false }] },
+      ];
     }
 
     function amendContract(group, clause, enabled) {
@@ -89,41 +422,202 @@
       if (listKey) {
         const list = state.contract[listKey];
         if (enabled && !list.includes(clause.value)) list.push(clause.value);
-        if (!enabled) state.contract[listKey] = list.filter(value => value !== clause.value);
-      } else if (group === "dependencies") state.contract.deps_may_change = enabled;
-      else if (group === "network") state.contract.network = enabled;
+        if (!enabled) state.contract[listKey] = list.filter((value) => value !== clause.value);
+      } else if (group === "dependencies") {
+        state.contract.deps_may_change = enabled;
+      } else if (group === "network") {
+        state.contract.network = enabled;
+      }
     }
 
-    function eventState(event) {
+    function eventVerdict(event) {
+      if (event.type === "loop-halt" || event.action === "loop") return "loop";
       if (event.action === "allow") return "allow";
       if (event.action === "hold") return "hold";
-      return "block";
+      if (event.action === "block" || event.type === "blocked") return "block";
+      return null;
+    }
+
+    function handleDaemonEvent(event) {
+      updateSystemStatus(event);
+      if (event.type === "proposed" && event.id && event.cmd) {
+        state.commands.set(event.id, event.cmd);
+        return;
+      }
+      const verdict = eventVerdict(event);
+      if (!verdict) return;
+      const command = event.cmd || state.commands.get(event.id) || event.command || event.type;
+      renderEvent({ ...event, cmd: command, verdict });
+    if (verdict === "block" && !event.event_update) flashBlockedClauses(event.proofs || []);
     }
 
     function renderEvent(event) {
-      const id = event.id || `${event.type}-${Date.now()}`;
-      const card = state.events.get(id) || document.createElement("article");
-      card.className = "event"; state.events.set(id, card);
-      const verdict = eventState(event);
-      const proofs = event.proofs ? event.proofs.map(proof => proof.rendered || proof.clause || String(proof)).join("\n") : "";
-      card.innerHTML = `<span class="chip ${verdict}">${verdict.toUpperCase()}</span><code>${event.cmd || event.type || "event"}</code><pre>${proofs}</pre>${event.explanation ? `<p>${event.explanation}</p>` : ""}`;
-      if (verdict === "hold") {
-        const actions = document.createElement("div"); actions.className = "actions";
-        actions.innerHTML = '<button>Approve once</button><button>Reject</button>';
-        actions.children[0].onclick = () => resolve(event.id, "approve_once");
-        actions.children[1].onclick = () => resolve(event.id, "reject");
-        card.append(actions);
+      const id = event.id || `${event.type || event.verdict}-${Date.now()}`;
+      const existing = state.eventModels.get(id) || {};
+      const model = { ...existing, ...event, id, seenAt: event.timestamp || event.at || existing.seenAt || new Date().toISOString() };
+      state.eventModels.set(id, model);
+      updateCounters(id, model.verdict);
+      $("#ledger-empty").hidden = true;
+
+      let card = state.events.get(id);
+      const isNew = !card;
+      if (!card) {
+        card = element("article", "event-card");
+        card.dataset.id = id;
+        state.events.set(id, card);
       }
-      document.querySelector("#events").prepend(card);
+      card.className = `event-card event-card--${model.verdict}`;
+      card.replaceChildren(buildEventHead(model));
+      if (model.verdict === "block" || model.verdict === "loop") buildBlockedDetails(card, model);
+      if (model.verdict === "hold") buildHoldActions(card, model);
+      if (model.resolution) card.append(element("p", "event-resolution", `resolution · ${model.resolution}`));
+      if (isNew) $("#events").prepend(card);
+      else $("#events").prepend(card);
     }
 
-    async function resolve(id, decision) {
-      await fetch("/resolve", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id, decision }) });
+    function buildEventHead(model) {
+      const head = element("header", "event-card__head");
+      head.append(element("span", `verdict-chip verdict-chip--${model.verdict}`, model.verdict));
+      head.append(element("code", "event-card__command", model.cmd || "command unavailable"));
+      const meta = element("div", "event-card__meta");
+      meta.append(element("span", "", formatLatency(model)));
+      meta.append(element("time", "", formatTime(model.seenAt)));
+      if (isTwinVerdict(model)) meta.append(element("span", "event-card__twin", "docker twin · network=none"));
+      head.append(meta);
+      return head;
     }
+
+    function buildBlockedDetails(card, model) {
+      const proofs = model.proofs || [];
+      if (proofs.length) {
+        const pre = element("pre", "proofs");
+        proofs.forEach((proof, index) => {
+          if (index) pre.append(document.createTextNode("\n"));
+          pre.append(proofLine(proof));
+        });
+        card.append(pre);
+      }
+      const returned = element("div", "returned-agent");
+      returned.append(element("span", "returned-agent__label", "Returned to agent"));
+      returned.append(element("div", "returned-agent__text", model.synthetic_stdout || fallbackHandoff(model)));
+      card.append(returned);
+      if (model.explanation) {
+        const explainer = element("p", "explainer");
+        explainer.append(element("span", "advisory-tag", `advisory · ${model.explainer_model || "gpt-5.6-luna"}`));
+        explainer.append(document.createTextNode(model.explanation));
+        card.append(explainer);
+      }
+    }
+
+    function proofLine(proof) {
+      const line = document.createDocumentFragment();
+      if (proof.rule) line.append(element("span", "proof-rule", `${proof.rule} `));
+      const rendered = proof.rendered || proof.clause || String(proof);
+      rendered.split(/(∧|⇒)/).forEach((part) => {
+        line.append(part === "∧" || part === "⇒" ? element("span", "proof-op", ` ${part} `) : document.createTextNode(part));
+      });
+      return line;
+    }
+
+    function buildHoldActions(card, model) {
+      const actions = element("div", "event-actions");
+      const approve = element("button", "button button--approve", "Approve once");
+      const reject = element("button", "button button--reject", "Reject");
+      approve.type = reject.type = "button";
+      approve.addEventListener("click", () => resolve(model.id, "approve_once", actions));
+      reject.addEventListener("click", () => resolve(model.id, "reject", actions));
+      actions.append(approve, reject);
+      card.append(actions);
+    }
+
+    async function resolve(id, decision, actions) {
+      actions.querySelectorAll("button").forEach((button) => { button.disabled = true; });
+      try {
+        const response = await fetch("/resolve", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id, decision }),
+        });
+        if (!response.ok) throw new Error("resolution failed");
+        const current = state.eventModels.get(id);
+        renderEvent({
+          ...current,
+          verdict: decision === "approve_once" ? "allow" : "block",
+          resolution: decision === "approve_once" ? "approve once sent" : "rejected",
+          event_update: true,
+        });
+      } catch (_) {
+        actions.querySelectorAll("button").forEach((button) => { button.disabled = false; });
+      }
+    }
+
+    function updateCounters(id, verdict) {
+      const bucket = verdict === "loop" ? "block" : verdict;
+      const previous = state.countedVerdicts.get(id);
+      if (previous === bucket || !["allow", "block", "hold"].includes(bucket)) return;
+      if (previous) state.counts[previous] -= 1;
+      state.counts[bucket] += 1;
+      state.countedVerdicts.set(id, bucket);
+      $("#count-allow").textContent = state.counts.allow;
+      $("#count-block").textContent = state.counts.block;
+      $("#count-hold").textContent = state.counts.hold;
+    }
+
+    function flashBlockedClauses(proofs) {
+      const targets = new Set();
+      for (const proof of proofs) {
+        if (proof.rule === "R-DEP-01") targets.add("[data-kind='deps_may_change']");
+        if (proof.rule === "R-NET-01") targets.add("[data-kind='network']");
+        if (proof.rule === "R-PATH-01") targets.add("[data-group='paths']");
+        if (proof.rule === "R-GIT-01") {
+          const git = String(proof.clause || "").match(/contains\s+(\w+)/i)?.[1]?.toLowerCase();
+          targets.add(git ? `[data-kind='git'][data-value='${git}']` : "[data-group='git']");
+        }
+        if (proof.rule === "R-OP-01") {
+          const operation = String(proof.clause || "").match(/contains\s+(\w+)/i)?.[1]?.toLowerCase();
+          targets.add(operation ? `[data-kind='operation'][data-value='${operation}']` : "[data-group='operations']");
+        }
+      }
+      targets.forEach((selector) => {
+        document.querySelectorAll(selector).forEach((target) => {
+          target.classList.remove("clause-flash");
+          void target.offsetWidth;
+          target.classList.add("clause-flash");
+          window.setTimeout(() => target.classList.remove("clause-flash"), 1450);
+        });
+      });
+    }
+
+    function updateSystemStatus(event) {
+      const type = event.type;
+      if (type === "daemon_online") setStatus("daemon", "online");
+      if (type === "daemon_offline") { setStatus("daemon", "offline"); setStatus("twin", "offline"); }
+      if (type === "twin_online") setStatus("twin", "online");
+      if (type === "twin_offline") setStatus("twin", "offline");
+      if (type === "twin_warming") setStatus("twin", "warming");
+      if (type === "session_online") setStatus("session", "online");
+      if (type === "session_offline") setStatus("session", "offline");
+    }
+
+    function setStatus(name, stateName) { $(`#status-${name}`).dataset.state = stateName; }
+    function isTwinVerdict(event) { return Boolean(event.twin || event.twin_diff || event.source === "twin" || event.executor === "twin"); }
+    function formatLatency(event) { const value = event.latency_ms ?? event.latency; return value === undefined ? "latency —" : `latency ${value}${typeof value === "number" ? " ms" : ""}`; }
+    function formatTime(value) { const date = new Date(value); return Number.isNaN(date.valueOf()) ? "now" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
+    function fallbackHandoff(model) {
+      if (model.verdict === "loop") return "Halted by Chaos Twin: repeated failure detected. Stop retrying and report the blocker to the user.";
+      const clause = model.proofs?.[0]?.clause || "scope contract violated";
+      return `Command blocked by Chaos Twin: ${clause}. This action is outside the approved task scope.`;
+    }
+    function element(tag, className = "", text = "") { const node = document.createElement(tag); if (className) node.className = className; if (text) node.textContent = text; return node; }
 
     const scheme = location.protocol === "https:" ? "wss" : "ws";
     const eventsSocket = new WebSocket(`${scheme}://${location.host}/events`);
-    eventsSocket.onmessage = (message) => renderEvent(JSON.parse(message.data));
+    eventsSocket.onopen = () => { setStatus("session", "online"); setStatus("daemon", "warming"); };
+    eventsSocket.onclose = () => { setStatus("session", "offline"); setStatus("daemon", "offline"); };
+    eventsSocket.onerror = () => setStatus("session", "offline");
+    eventsSocket.onmessage = (message) => {
+      try { handleDaemonEvent(JSON.parse(message.data)); } catch (_) { setStatus("session", "offline"); }
+    };
   </script>
 </body>
 </html>
