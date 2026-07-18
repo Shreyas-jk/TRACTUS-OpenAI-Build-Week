@@ -68,7 +68,7 @@ ARTIFACT_PATHS = (
 SYSTEM_PROMPT = """You translate a user's coding task into a least-privilege Chaos Twin Intent Contract.
 
 Return only the structured contract. Apply these rules exactly:
-- The extraction prompt always includes the project's build-artifact directories (`target/`, `node_modules/`, `__pycache__/`, `.venv/`) in `allowed_paths`; otherwise every test or build command false-blocks on artifact writes.
+- NEVER emit build-artifact directories (`target/`, `node_modules/`, `**/__pycache__/`, `.venv/`) in `allowed_paths`. The control plane owns those paths and adds them after extraction.
 - Any code-editing task implies the `test` and `build` op grants.
 - `run` stays a separate, explicit grant: never grant it unless the user's request explicitly needs it.
 - Network access is never granted unless the user's request explicitly needs it.
@@ -140,7 +140,22 @@ def normalize_contract(contract: ContractSpec, request: str) -> ContractSpec:
 
 
 def _deduplicated(values: list[str]) -> list[str]:
-    return list(dict.fromkeys(values))
+    """Canonicalize directory grants to one recursive glob before deduplicating."""
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        path = value.strip().lstrip("/").rstrip("/")
+        if not path:
+            continue
+        if not path.endswith("/**") and (
+            not any(character in path for character in "*?[")
+            or path.startswith("**/")
+        ):
+            path = f"{path}/**"
+        if path not in seen:
+            seen.add(path)
+            normalized.append(path)
+    return normalized
 
 
 def _ordered_operations(operations: set[Operation]) -> list[Operation]:
