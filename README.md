@@ -13,7 +13,13 @@ OpenAI Build Week 2026, Developer Tools track.
 
 Chaos Twin's Codex hook requires Codex CLI **v0.114 or newer** with experimental hooks, and is supported on macOS and Linux only.
 
-1. Build the hook binary with `cargo build --bin ct-hook`. The repo-local [`.codex/hooks.json`](.codex/hooks.json) registers its absolute binary path for the `PreToolUse` `Bash` matcher.
+1. Build and install the hook with:
+
+   ```sh
+   cargo build --release --bin ct-hook && ./scripts/install-hook.sh
+   ```
+
+   This generates the machine-local `.codex/hooks.json` with the absolute path to the committed self-locating wrapper. The file is intentionally gitignored: every clone must generate its own path. The hook covers both `Bash` and native `apply_patch` edits.
 2. Enable hooks in `~/.codex/config.toml`:
 
    ```toml
