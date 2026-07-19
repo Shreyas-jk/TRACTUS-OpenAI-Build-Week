@@ -3,6 +3,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::env;
+use std::fs::OpenOptions;
 use std::io::{self, Read, Write};
 use std::panic;
 use std::path::Path;
@@ -13,11 +14,16 @@ const UNKNOWN_PATCH_PATHS_REASON: &str =
 
 #[derive(Deserialize)]
 struct PreToolUsePayload {
-    session_id: String,
-    cwd: String,
-    hook_event_name: String,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    cwd: Option<String>,
+    #[serde(default)]
+    hook_event_name: Option<String>,
     tool_name: String,
-    tool_use_id: String,
+    #[serde(default)]
+    tool_use_id: Option<String>,
+    #[serde(default)]
     tool_input: Value,
 }
 
@@ -29,41 +35,70 @@ fn main() {
 }
 
 fn run() -> Value {
-    let mut input = String::new();
-    if io::stdin().read_to_string(&mut input).is_err() {
+    let mut input = Vec::new();
+    let read_result = io::stdin().read_to_end(&mut input);
+    capture_raw_input(&input);
+    if read_result.is_err() {
         return unavailable_response();
     }
-    let payload: PreToolUsePayload = match serde_json::from_str(&input) {
+    let payload: PreToolUsePayload = match serde_json::from_slice(&input) {
         Ok(payload) => payload,
         Err(_) => return unavailable_response(),
     };
 
     let _ = (&payload.hook_event_name, &payload.tool_use_id);
+    let agent_session = payload
+        .session_id
+        .as_deref()
+        .filter(|session_id| !session_id.is_empty())
+        .unwrap_or("default");
     match payload.tool_name.as_str() {
         "Bash" => {
             let Some(command) = payload.tool_input.get("command").and_then(Value::as_str) else {
                 return unavailable_response();
             };
             let environment = env::vars().collect::<HashMap<_, _>>();
-            request_verdict(
-                command,
-                Path::new(&payload.cwd),
-                &payload.session_id,
-                environment,
-            )
-            .map(verdict_response)
-            .unwrap_or_else(|()| unavailable_response())
+            let cwd = payload_cwd(&payload);
+            request_verdict(command, cwd, agent_session, environment)
+                .map(verdict_response)
+                .unwrap_or_else(|()| unavailable_response())
         }
         "apply_patch" => {
             let Some(writes) = touched_paths(&payload.tool_input) else {
                 return decision_response("ask", UNKNOWN_PATCH_PATHS_REASON.to_owned());
             };
-            request_edit_verdict(&writes, Path::new(&payload.cwd), &payload.session_id)
+            let cwd = payload_cwd(&payload);
+            request_edit_verdict(&writes, cwd, agent_session)
                 .map(verdict_response)
                 .unwrap_or_else(|()| unavailable_response())
         }
         _ => continue_response(),
     }
+}
+
+fn payload_cwd(payload: &PreToolUsePayload) -> &Path {
+    match payload.cwd.as_deref().filter(|cwd| !cwd.is_empty()) {
+        Some(cwd) => Path::new(cwd),
+        None => {
+            eprintln!("Chaos Twin ct-hook: missing cwd in PreToolUse payload; using .");
+            Path::new(".")
+        }
+    }
+}
+
+fn capture_raw_input(input: &[u8]) {
+    let Ok(path) = env::var("CHAOSTWIN_HOOK_LOG") else {
+        return;
+    };
+    if let Err(error) = append_raw_capture(Path::new(&path), input) {
+        eprintln!("Chaos Twin ct-hook: failed to write raw hook capture: {error}");
+    }
+}
+
+fn append_raw_capture(path: &Path, input: &[u8]) -> io::Result<()> {
+    let mut log = OpenOptions::new().create(true).append(true).open(path)?;
+    log.write_all(input)?;
+    log.write_all(b"\n")
 }
 
 fn verdict_response(verdict: ShimVerdict) -> Value {
@@ -75,11 +110,36 @@ fn verdict_response(verdict: ShimVerdict) -> Value {
 }
 
 fn touched_paths(tool_input: &Value) -> Option<Vec<String>> {
-    let patch = ["patch", "diff", "input"]
-        .into_iter()
-        .find_map(|field| tool_input.get(field).and_then(Value::as_str))?;
     let mut paths = Vec::new();
 
+    if let Some(patch) = tool_input.as_str() {
+        append_patch_paths(patch, &mut paths);
+    }
+    for field in ["patch", "diff", "input"] {
+        if let Some(patch) = tool_input.get(field).and_then(Value::as_str) {
+            append_patch_paths(patch, &mut paths);
+        }
+    }
+    for field in ["changes", "files"] {
+        if let Some(entries) = tool_input.get(field).and_then(Value::as_array) {
+            for entry in entries {
+                match entry {
+                    Value::String(path) => append_path(path, &mut paths),
+                    Value::Object(_) => {
+                        if let Some(path) = entry.get("path").and_then(Value::as_str) {
+                            append_path(path, &mut paths);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    (!paths.is_empty()).then_some(paths)
+}
+
+fn append_patch_paths(patch: &str, paths: &mut Vec<String>) {
     for line in patch.lines() {
         let path = [
             "*** Update File: ",
@@ -92,12 +152,15 @@ fn touched_paths(tool_input: &Value) -> Option<Vec<String>> {
         let Some(path) = path.map(str::trim).filter(|path| !path.is_empty()) else {
             continue;
         };
-        if !paths.iter().any(|existing| existing == path) {
-            paths.push(path.to_owned());
-        }
+        append_path(path, paths);
     }
+}
 
-    (!paths.is_empty()).then_some(paths)
+fn append_path(path: &str, paths: &mut Vec<String>) {
+    let path = path.trim();
+    if !path.is_empty() && !paths.iter().any(|existing| existing == path) {
+        paths.push(path.to_owned());
+    }
 }
 
 fn continue_response() -> Value {
@@ -134,5 +197,53 @@ mod tests {
             paths,
             ["src/lib.rs", "src/core.rs", "tests/core.rs", "old.rs"]
         );
+    }
+
+    #[test]
+    fn extracts_structured_apply_patch_paths() {
+        let paths = touched_paths(&json!({
+            "changes": [
+                {"path": "src/lib.rs", "kind": "update"},
+                {"path": "tests/hook.rs", "kind": "add"}
+            ],
+            "files": [
+                {"path": "src/lib.rs", "kind": "delete"},
+                "README.md"
+            ]
+        }))
+        .unwrap();
+
+        assert_eq!(paths, ["src/lib.rs", "tests/hook.rs", "README.md"]);
+    }
+
+    #[test]
+    fn only_tool_name_is_required_in_payload() {
+        let payload: PreToolUsePayload = serde_json::from_value(json!({"tool_name": "Bash"}))
+            .expect("tool_name-only payload should deserialize");
+
+        assert!(payload.session_id.is_none());
+        assert!(payload.cwd.is_none());
+        assert!(payload.tool_input.is_null());
+    }
+
+    #[test]
+    fn raw_capture_preserves_bytes_and_appends_a_newline() {
+        let path = std::env::temp_dir().join(format!(
+            "chaostwin-hook-capture-{}-{}.log",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let raw = br#"{"tool_name":"Bash"}"#;
+
+        append_raw_capture(&path, raw).unwrap();
+
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            [raw.as_slice(), b"\n"].concat()
+        );
+        let _ = std::fs::remove_file(path);
     }
 }

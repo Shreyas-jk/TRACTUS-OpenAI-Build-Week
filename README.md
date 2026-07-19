@@ -32,5 +32,7 @@ Chaos Twin's Codex hook requires Codex CLI **v0.114 or newer** with experimental
 
 `ct-hook` sends proposals to the same `chaosd` instance as `ct-shim`, so the existing dashboard lights up live with no extra wiring.
 
+> **Hook schema verification pending:** `ct-hook`'s `PreToolUse` payload handling has not yet been confirmed against a live Codex run. Set `CHAOSTWIN_HOOK_LOG=/path/to/capture.log` for that run to append the exact raw payload before parsing, then compare it with the supported fields before relying on the integration.
+
 > Stub. Setup instructions, sample data, demo video link, and the "how GPT-5.6 and Codex were
 > used" section land before submission (Mon Jul 20), generated in the Codex session.
