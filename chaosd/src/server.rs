@@ -175,10 +175,15 @@ async fn handle_propose(
             emit(config, json!({"type": "loop-halt", "id": id, "n": n}));
             write_json(writer, &response).await
         }
-        Verdict::NeedsHuman(_) => {
+        Verdict::NeedsHuman(reason) => {
             let (sender, receiver) = oneshot::channel();
             config.state.lock().await.pending_holds.insert(id.clone(), sender);
-            let hold = json!({"type": "verdict", "id": id, "action": "hold"});
+            let hold = json!({
+                "type": "verdict",
+                "id": id,
+                "action": "hold",
+                "reason": needs_human_reason(&reason),
+            });
             emit(config, hold.clone());
             write_json(writer, &hold).await?;
 
@@ -204,6 +209,15 @@ async fn handle_propose(
                 }
             }
         }
+    }
+}
+
+fn needs_human_reason(reason: &Reason) -> &'static str {
+    match reason {
+        Reason::Opaque => "Chaos Twin could not safely interpret this command.",
+        Reason::TwinTimeout => "Chaos Twin speculation timed out.",
+        Reason::UnresolvedVar => "Chaos Twin could not resolve a command variable.",
+        Reason::ContractAmbiguous => "Chaos Twin has no active contract for this command.",
     }
 }
 

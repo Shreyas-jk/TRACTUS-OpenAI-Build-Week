@@ -1,5 +1,5 @@
 [workspace]
-members = ["chaos-core", "chaosd", "ct-shim"]
+members = ["chaos-core", "chaosd", "ct-shim", "ct-hook"]
 resolver = "2"
 
 [workspace.package]
