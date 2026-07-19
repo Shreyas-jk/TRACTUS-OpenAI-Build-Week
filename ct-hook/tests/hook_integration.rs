@@ -29,15 +29,32 @@ fn deps_locked_contract() -> ContractSpec {
     }
 }
 
-async fn set_contract(socket: &Path) {
+fn edit_paths_contract() -> ContractSpec {
+    let mut allowed_ops = OpSet::empty();
+    allowed_ops.insert(OpClass::Edit);
+    ContractSpec {
+        task: "edit only source files".to_owned(),
+        allowed_paths: vec!["src/**".to_owned()],
+        allowed_ops,
+        deps_may_change: false,
+        git_ops: GitOpSet::empty(),
+        network: false,
+    }
+}
+
+async fn set_contract(socket: &Path, contract: ContractSpec) {
     let stream = UnixStream::connect(socket).await.unwrap();
     let mut client = BufReader::new(stream);
     let request = serde_json::to_string(&json!({
         "type": "set_contract",
-        "contract": deps_locked_contract(),
+        "contract": contract,
     }))
     .unwrap();
-    client.get_mut().write_all(request.as_bytes()).await.unwrap();
+    client
+        .get_mut()
+        .write_all(request.as_bytes())
+        .await
+        .unwrap();
     client.get_mut().write_all(b"\n").await.unwrap();
     let mut response = String::new();
     client.read_line(&mut response).await.unwrap();
@@ -79,7 +96,10 @@ fn parse_output(output: Output) -> Value {
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
-async fn start_daemon(root: &Path) -> (std::path::PathBuf, tokio::task::JoinHandle<()>) {
+async fn start_daemon(
+    root: &Path,
+    contract: ContractSpec,
+) -> (std::path::PathBuf, tokio::task::JoinHandle<()>) {
     let socket = root.join("chaostwin.sock");
     let listener = UnixListener::bind(&socket).unwrap();
     let config = Arc::new(ServerConfig::new(
@@ -90,13 +110,16 @@ async fn start_daemon(root: &Path) -> (std::path::PathBuf, tokio::task::JoinHand
     let daemon = tokio::spawn(async move {
         let _ = serve(listener, config).await;
     });
-    set_contract(&socket).await;
+    set_contract(&socket, contract).await;
     (socket, daemon)
 }
 
 fn test_root(label: &str) -> std::path::PathBuf {
     let index = NEXT_TEST.fetch_add(1, Ordering::Relaxed);
-    let root = std::env::temp_dir().join(format!("chaostwin-hook-{label}-{}-{index}", std::process::id()));
+    let root = std::env::temp_dir().join(format!(
+        "chaostwin-hook-{label}-{}-{index}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&root).unwrap();
     root
 }
@@ -104,14 +127,12 @@ fn test_root(label: &str) -> std::path::PathBuf {
 #[tokio::test]
 async fn bash_dependency_change_is_denied_with_the_verbatim_handoff() {
     let root = test_root("deny");
-    let (socket, daemon) = start_daemon(&root).await;
+    let (socket, daemon) = start_daemon(&root, deps_locked_contract()).await;
 
-    let response = parse_output(invoke(&socket, &root, payload(&root, "Bash", "cargo add axios")).await);
+    let response =
+        parse_output(invoke(&socket, &root, payload(&root, "Bash", "cargo add axios")).await);
 
-    assert_eq!(
-        response["hookSpecificOutput"]["permissionDecision"],
-        "deny"
-    );
+    assert_eq!(response["hookSpecificOutput"]["permissionDecision"], "deny");
     assert_eq!(
         response["hookSpecificOutput"]["permissionDecisionReason"],
         handoff::scope_violation("R-DEP-01: deps_may_change = false")
@@ -124,7 +145,7 @@ async fn bash_dependency_change_is_denied_with_the_verbatim_handoff() {
 #[tokio::test]
 async fn in_scope_bash_command_continues() {
     let root = test_root("allow");
-    let (socket, daemon) = start_daemon(&root).await;
+    let (socket, daemon) = start_daemon(&root, deps_locked_contract()).await;
 
     let response = parse_output(invoke(&socket, &root, payload(&root, "Bash", "cargo test")).await);
 
@@ -163,15 +184,38 @@ async fn daemon_down_asks_for_manual_approval() {
         .await,
     );
 
-    assert_eq!(
-        response["hookSpecificOutput"]["permissionDecision"],
-        "ask"
-    );
+    assert_eq!(response["hookSpecificOutput"]["permissionDecision"], "ask");
     assert_eq!(
         response["hookSpecificOutput"]["permissionDecisionReason"],
         UNAVAILABLE_REASON
     );
     assert!(response.get("continue").is_none());
 
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn apply_patch_outside_allowed_paths_is_denied() {
+    let root = test_root("apply-patch-deny");
+    let (socket, daemon) = start_daemon(&root, edit_paths_contract()).await;
+    let patch = "*** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n*** End Patch";
+    let payload = json!({
+        "session_id": "codex-hook-test",
+        "cwd": root,
+        "hook_event_name": "PreToolUse",
+        "tool_name": "apply_patch",
+        "tool_use_id": "tool-use-patch-1",
+        "tool_input": {"patch": patch},
+    });
+
+    let response = parse_output(invoke(&socket, &root, payload).await);
+
+    assert_eq!(response["hookSpecificOutput"]["permissionDecision"], "deny");
+    assert_eq!(
+        response["hookSpecificOutput"]["permissionDecisionReason"],
+        handoff::scope_violation("R-PATH-01: path matches allowed_paths")
+    );
+
+    daemon.abort();
     let _ = std::fs::remove_dir_all(root);
 }

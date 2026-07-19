@@ -2,9 +2,9 @@ use crate::handoff;
 use crate::state::{HoldDecision, PendingReport, SharedState};
 use crate::twin::{TwinExecutor, TwinOutcome};
 use chaos_core::classify::{classify, Classification};
-use chaos_core::contract::{ContractSpec, ProofTrace, Reason, Verdict};
+use chaos_core::contract::{ContractSpec, Effects, OpClass, ProofTrace, Reason, Verdict};
 use chaos_core::history::{ExitClass, History};
-use chaos_core::parse::{parse_with_env, ParseOutcome};
+use chaos_core::parse::{normalize_path, parse_with_env, ParseOutcome};
 use chaos_core::verdict::{assemble, check, combine_verdicts};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -71,7 +71,11 @@ async fn handle_connection(stream: UnixStream, config: Arc<ServerConfig>) -> io:
         let request = match serde_json::from_str::<Request>(&line) {
             Ok(request) => request,
             Err(error) => {
-                write_json(&mut write_half, &json!({"type": "error", "message": error.to_string()})).await?;
+                write_json(
+                    &mut write_half,
+                    &json!({"type": "error", "message": error.to_string()}),
+                )
+                .await?;
                 continue;
             }
         };
@@ -90,7 +94,11 @@ async fn handle_connection(stream: UnixStream, config: Arc<ServerConfig>) -> io:
                 })?;
                 config.state.lock().await.active_contract = Some(Arc::new(compiled));
                 emit(&config, json!({"type": "contract", "action": "set"}));
-                write_json(&mut write_half, &json!({"type": "contract", "action": "set"})).await?;
+                write_json(
+                    &mut write_half,
+                    &json!({"type": "contract", "action": "set"}),
+                )
+                .await?;
             }
             Request::Report { id, exit_code } => {
                 let recorded = record_report(&config.state, &id, exit_code).await;
@@ -133,10 +141,132 @@ async fn handle_connection(stream: UnixStream, config: Arc<ServerConfig>) -> io:
                 )
                 .await?;
             }
+            Request::ProposeEdit {
+                id,
+                cwd,
+                writes,
+                agent_session,
+            } => {
+                let command = format!(
+                    "apply_patch {}",
+                    writes
+                        .iter()
+                        .map(|path| path.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                );
+                emit(
+                    &config,
+                    json!({"type": "proposed", "id": id, "cmd": command}),
+                );
+                handle_propose_edit(
+                    &mut write_half,
+                    &config,
+                    id,
+                    cwd,
+                    writes,
+                    agent_session.unwrap_or_else(|| "default".to_owned()),
+                )
+                .await?;
+            }
         }
     }
 
     Ok(())
+}
+
+async fn handle_propose_edit(
+    writer: &mut OwnedWriteHalf,
+    config: &Arc<ServerConfig>,
+    id: String,
+    cwd: PathBuf,
+    writes: Vec<PathBuf>,
+    agent_session: String,
+) -> io::Result<()> {
+    let verdict = if writes.is_empty() {
+        Verdict::NeedsHuman(Reason::Opaque)
+    } else {
+        let effects = Effects {
+            family: Some("apply_patch".to_owned()),
+            writes: writes
+                .iter()
+                .map(|path| normalize_path(&cwd, &config.workspace_root, path).path)
+                .collect(),
+            op: OpClass::Edit,
+            ..Effects::default()
+        };
+        evaluate_effects(config, effects, &agent_session).await
+    };
+
+    match verdict {
+        Verdict::InScope => {
+            let response = json!({"type": "verdict", "id": id, "action": "allow"});
+            emit(config, response.clone());
+            write_json(writer, &response).await
+        }
+        Verdict::ScopeViolation(proofs) => {
+            let clause = violated_clause(&proofs);
+            let response = blocked_response(&id, handoff::scope_violation(&clause), &proofs);
+            emit(
+                config,
+                json!({"type": "blocked", "id": id, "proofs": proof_values(&proofs)}),
+            );
+            write_json(writer, &response).await
+        }
+        Verdict::Loop { n, signature } => {
+            let response = json!({
+                "type": "verdict",
+                "id": id,
+                "action": "block",
+                "exit_code": 1,
+                "synthetic_stdout": handoff::loop_halt(n),
+                "signature": signature,
+            });
+            emit(config, json!({"type": "loop-halt", "id": id, "n": n}));
+            write_json(writer, &response).await
+        }
+        Verdict::NeedsHuman(reason) => {
+            let (sender, receiver) = oneshot::channel();
+            config
+                .state
+                .lock()
+                .await
+                .pending_holds
+                .insert(id.clone(), sender);
+            let hold = json!({
+                "type": "verdict",
+                "id": id,
+                "action": "hold",
+                "reason": needs_human_reason(&reason),
+            });
+            emit(config, hold.clone());
+            write_json(writer, &hold).await?;
+
+            let decision = timeout(HOLD_TIMEOUT, receiver).await;
+            config.state.lock().await.pending_holds.remove(&id);
+            match decision {
+                Ok(Ok(HoldDecision::ApproveOnce)) => {
+                    let response = json!({"type": "verdict", "id": id, "action": "allow"});
+                    emit(config, response.clone());
+                    write_json(writer, &response).await
+                }
+                Ok(Ok(HoldDecision::Reject)) | Ok(Err(_)) | Err(_) => {
+                    let response = json!({
+                        "type": "verdict",
+                        "id": id,
+                        "action": "block",
+                        "exit_code": 1,
+                        "synthetic_stdout": handoff::needs_human(),
+                    });
+                    emit(
+                        config,
+                        json!({"type": "blocked", "id": id, "reason": "needs-human"}),
+                    );
+                    write_json(writer, &response).await
+                }
+            }
+        }
+    }
 }
 
 async fn handle_propose(
@@ -160,7 +290,10 @@ async fn handle_propose(
         Verdict::ScopeViolation(proofs) => {
             let clause = violated_clause(&proofs);
             let response = blocked_response(&id, handoff::scope_violation(&clause), &proofs);
-            emit(config, json!({"type": "blocked", "id": id, "proofs": proof_values(&proofs)}));
+            emit(
+                config,
+                json!({"type": "blocked", "id": id, "proofs": proof_values(&proofs)}),
+            );
             write_json(writer, &response).await
         }
         Verdict::Loop { n, signature } => {
@@ -177,7 +310,12 @@ async fn handle_propose(
         }
         Verdict::NeedsHuman(reason) => {
             let (sender, receiver) = oneshot::channel();
-            config.state.lock().await.pending_holds.insert(id.clone(), sender);
+            config
+                .state
+                .lock()
+                .await
+                .pending_holds
+                .insert(id.clone(), sender);
             let hold = json!({
                 "type": "verdict",
                 "id": id,
@@ -191,7 +329,8 @@ async fn handle_propose(
             config.state.lock().await.pending_holds.remove(&id);
             match decision {
                 Ok(Ok(HoldDecision::ApproveOnce)) => {
-                    save_pending_report(&config.state, &id, &agent_session, pipeline.commands).await;
+                    save_pending_report(&config.state, &id, &agent_session, pipeline.commands)
+                        .await;
                     let response = json!({"type": "verdict", "id": id, "action": "allow"});
                     emit(config, response.clone());
                     write_json(writer, &response).await
@@ -204,7 +343,10 @@ async fn handle_propose(
                         "exit_code": 1,
                         "synthetic_stdout": handoff::needs_human(),
                     });
-                    emit(config, json!({"type": "blocked", "id": id, "reason": "needs-human"}));
+                    emit(
+                        config,
+                        json!({"type": "blocked", "id": id, "reason": "needs-human"}),
+                    );
                     write_json(writer, &response).await
                 }
             }
@@ -260,16 +402,21 @@ async fn evaluate(
         },
         ParseOutcome::Commands(commands) => {
             let mut verdicts = Vec::with_capacity(commands.len());
-            let report_commands = commands.iter().map(|command| command.argv.clone()).collect();
+            let report_commands = commands
+                .iter()
+                .map(|command| command.argv.clone())
+                .collect();
 
             for command in &commands {
                 let classification = classify(command, cwd, &config.workspace_root);
                 let verdict = match classification {
                     Classification::Effects(_) => {
-                        let effects = assemble(command, classification, cwd, &config.workspace_root);
+                        let effects =
+                            assemble(command, classification, cwd, &config.workspace_root);
                         check(&effects, &contract, &history)
                     }
-                    Classification::Unclassified => match config.twin.speculate(command, cwd).await {
+                    Classification::Unclassified => match config.twin.speculate(command, cwd).await
+                    {
                         TwinOutcome::Effects(effects) => check(&effects, &contract, &history),
                         TwinOutcome::NeedsHuman(reason) => Verdict::NeedsHuman(reason),
                     },
@@ -283,6 +430,27 @@ async fn evaluate(
             }
         }
     }
+}
+
+async fn evaluate_effects(
+    config: &Arc<ServerConfig>,
+    effects: Effects,
+    agent_session: &str,
+) -> Verdict {
+    let (contract, history) = {
+        let mut state = config.state.lock().await;
+        let history = state
+            .histories
+            .entry(agent_session.to_owned())
+            .or_insert_with(History::default)
+            .clone();
+        (state.active_contract.clone(), history)
+    };
+    let Some(contract) = contract else {
+        return Verdict::NeedsHuman(Reason::ContractAmbiguous);
+    };
+
+    check(&effects, &contract, &history)
 }
 
 async fn save_pending_report(
@@ -376,6 +544,13 @@ enum Request {
         #[serde(default)]
         agent_session: Option<String>,
     },
+    ProposeEdit {
+        id: String,
+        cwd: PathBuf,
+        writes: Vec<PathBuf>,
+        #[serde(default)]
+        agent_session: Option<String>,
+    },
     Report {
         id: String,
         #[serde(default)]
@@ -441,12 +616,13 @@ mod tests {
         }
     }
 
-    async fn send_and_read(
-        client: &mut BufReader<UnixStream>,
-        message: Value,
-    ) -> Value {
+    async fn send_and_read(client: &mut BufReader<UnixStream>, message: Value) -> Value {
         let encoded = serde_json::to_string(&message).unwrap();
-        client.get_mut().write_all(encoded.as_bytes()).await.unwrap();
+        client
+            .get_mut()
+            .write_all(encoded.as_bytes())
+            .await
+            .unwrap();
         client.get_mut().write_all(b"\n").await.unwrap();
         client.get_mut().flush().await.unwrap();
         let mut response = String::new();

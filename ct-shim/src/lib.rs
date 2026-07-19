@@ -14,7 +14,10 @@ pub const REPORT_ACK_WAIT: Duration = Duration::from_secs(2);
 const DEFAULT_HOLD_REASON: &str = "Chaos Twin requires manual review.";
 
 pub enum ShimVerdict {
-    Allow { connection: UnixStream, id: String },
+    Allow {
+        connection: UnixStream,
+        id: String,
+    },
     Block(String),
     Hold {
         connection: UnixStream,
@@ -36,13 +39,6 @@ pub fn request_verdict(
     agent_session: &str,
     environment: HashMap<String, String>,
 ) -> Result<ShimVerdict, ()> {
-    let socket_path = socket_path::default_socket_path();
-    let mut connection = UnixStream::connect(socket_path).map_err(|_| ())?;
-    connection.set_read_timeout(Some(HOLD_WAIT)).map_err(|_| ())?;
-    connection
-        .set_write_timeout(Some(Duration::from_secs(5)))
-        .map_err(|_| ())?;
-
     let id = command_id();
     let proposal = json!({
         "type": "propose",
@@ -52,6 +48,41 @@ pub fn request_verdict(
         "env": environment,
         "agent_session": agent_session,
     });
+    submit_proposal(id, proposal)
+}
+
+/// Submit a native-editor change as deterministic write effects. The daemon
+/// normalizes these paths against the proposed working directory before it
+/// evaluates the active contract.
+pub fn request_edit_verdict(
+    writes: &[String],
+    cwd: &Path,
+    agent_session: &str,
+) -> Result<ShimVerdict, ()> {
+    if writes.is_empty() {
+        return Err(());
+    }
+
+    let id = command_id();
+    let proposal = json!({
+        "type": "propose_edit",
+        "id": id,
+        "cwd": cwd,
+        "writes": writes,
+        "agent_session": agent_session,
+    });
+    submit_proposal(id, proposal)
+}
+
+fn submit_proposal(id: String, proposal: Value) -> Result<ShimVerdict, ()> {
+    let socket_path = socket_path::default_socket_path();
+    let mut connection = UnixStream::connect(socket_path).map_err(|_| ())?;
+    connection
+        .set_read_timeout(Some(HOLD_WAIT))
+        .map_err(|_| ())?;
+    connection
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .map_err(|_| ())?;
     write_json(&mut connection, &proposal)?;
 
     match read_response(&mut connection, HOLD_WAIT)? {
