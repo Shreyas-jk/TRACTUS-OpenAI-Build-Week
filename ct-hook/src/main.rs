@@ -11,9 +11,9 @@ use std::io::{self, Read, Write};
 use std::panic;
 use std::path::Path;
 
-const UNAVAILABLE_REASON: &str = "Chaos Twin unavailable so approve manually or start chaosd.";
+const UNAVAILABLE_REASON: &str = "Tractus unavailable so approve manually or start chaosd.";
 const UNKNOWN_PATCH_PATHS_REASON: &str =
-    "Chaos Twin could not determine which files this patch touches, so approve manually.";
+    "Tractus could not determine which files this patch touches, so approve manually.";
 
 #[derive(Debug, Default, Eq, PartialEq)]
 struct TouchedPaths {
@@ -101,18 +101,18 @@ fn payload_cwd(payload: &PreToolUsePayload) -> &Path {
     match payload.cwd.as_deref().filter(|cwd| !cwd.is_empty()) {
         Some(cwd) => Path::new(cwd),
         None => {
-            eprintln!("Chaos Twin ct-hook: missing cwd in PreToolUse payload; using .");
+            eprintln!("Tractus ct-hook: missing cwd in PreToolUse payload; using .");
             Path::new(".")
         }
     }
 }
 
 fn capture_raw_input(input: &[u8]) {
-    let Ok(path) = env::var("CHAOSTWIN_HOOK_LOG") else {
+    let Ok(path) = env::var("TRACTUS_HOOK_LOG") else {
         return;
     };
     if let Err(error) = append_raw_capture(Path::new(&path), input) {
-        eprintln!("Chaos Twin ct-hook: failed to write raw hook capture: {error}");
+        eprintln!("Tractus ct-hook: failed to write raw hook capture: {error}");
     }
 }
 
@@ -284,7 +284,7 @@ mod tests {
     #[test]
     fn raw_capture_preserves_bytes_and_appends_a_newline() {
         let path = std::env::temp_dir().join(format!(
-            "chaostwin-hook-capture-{}-{}.log",
+            "tractus-hook-capture-{}-{}.log",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

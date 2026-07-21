@@ -7,7 +7,7 @@ use std::sync::Arc;
 async fn main() {
     tracing_subscriber::fmt::init();
 
-    let listener = bind_default_listener().expect("bind Chaos Twin Unix socket");
+    let listener = bind_default_listener().expect("bind Tractus Unix socket");
     let workspace_root = std::env::current_dir().expect("read workspace root");
     let twin = PooledTwin::new(workspace_root.clone());
     twin.start();

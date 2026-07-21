@@ -1,4 +1,4 @@
-"""PTY-backed terminal bridge for the Chaos Twin control plane."""
+"""PTY-backed terminal bridge for the Tractus control plane."""
 
 from __future__ import annotations
 

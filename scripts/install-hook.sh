@@ -7,7 +7,7 @@ WRAPPER="$ROOT_DIR/.codex/run-ct-hook.sh"
 HOOKS_FILE="$ROOT_DIR/.codex/hooks.json"
 
 if [ ! -x "$WRAPPER" ]; then
-    printf '%s\n' "Chaos Twin hook wrapper is missing or not executable: $WRAPPER" >&2
+    printf '%s\n' "Tractus hook wrapper is missing or not executable: $WRAPPER" >&2
     exit 2
 fi
 
@@ -29,4 +29,4 @@ cat > "$HOOKS_FILE" <<EOF
 }
 EOF
 
-printf '%s\n' "Installed Chaos Twin hook configuration at $HOOKS_FILE"
+printf '%s\n' "Installed Tractus hook configuration at $HOOKS_FILE"

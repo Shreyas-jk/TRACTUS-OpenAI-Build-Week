@@ -359,10 +359,10 @@ async fn apply_approve_action(action: ApproveAction, state: &SharedState, id: &s
 
 fn needs_human_reason(reason: &Reason) -> &'static str {
     match reason {
-        Reason::Opaque => "Chaos Twin could not safely interpret this command.",
-        Reason::TwinTimeout => "Chaos Twin speculation timed out.",
-        Reason::UnresolvedVar => "Chaos Twin could not resolve a command variable.",
-        Reason::ContractAmbiguous => "Chaos Twin has no active contract for this command.",
+        Reason::Opaque => "Tractus could not safely interpret this command.",
+        Reason::TwinTimeout => "Tractus speculation timed out.",
+        Reason::UnresolvedVar => "Tractus could not resolve a command variable.",
+        Reason::ContractAmbiguous => "Tractus has no active contract for this command.",
     }
 }
 
@@ -644,7 +644,7 @@ mod tests {
     async fn uds_protocol_allows_blocks_and_resolves() {
         let suffix = NEXT_SOCKET.fetch_add(1, Ordering::Relaxed);
         let socket = std::env::temp_dir().join(format!(
-            "chaostwin-server-test-{}-{suffix}.sock",
+            "tractus-server-test-{}-{suffix}.sock",
             std::process::id()
         ));
         let _ = std::fs::remove_file(&socket);

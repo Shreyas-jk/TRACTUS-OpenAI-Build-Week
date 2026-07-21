@@ -44,7 +44,7 @@ def create_app(
     extractor = extractor or extract_intent
     explainer = explainer or explain_divergence
     active_task = "the approved task"
-    app = FastAPI(title="Chaos Twin Control Plane")
+    app = FastAPI(title="Tractus Control Plane")
     app.mount("/static", StaticFiles(directory=STATIC_INDEX.parent), name="static")
 
     @app.get("/", include_in_schema=False)

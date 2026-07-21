@@ -1,4 +1,4 @@
-# chaos-core — Rust Architecture
+# tractus-core — Rust Architecture
 
 **Status:** Draft v1 (Jul 13, 2026). Companion to DESIGN.md Sections 4.1 and 4.2.
 
@@ -7,7 +7,7 @@
 Three Rust artifacts in one cargo workspace, plus the Python control plane:
 
 ```
-chaostwin/
+tractus/
 ├── Cargo.toml            # workspace
 ├── chaos-core/           # lib: contract, parse, classify, verdict, history. Pure, no IO.
 ├── chaosd/               # bin: daemon. Owns enforcement state, twin pool, event bus.
@@ -16,7 +16,7 @@ chaostwin/
 ```
 
 - **`ct-shim`** mimics the `sh -c` interface so any agent that shells out can use it: Codex CLI is configured with `SHELL=ct-shim` (or its shell hook), and each proposed command arrives as `ct-shim -c "<command>"`. The shim sends the command to `chaosd` over a Unix domain socket, waits for the verdict, then either `exec`s the real `/bin/sh -c <command>` (preserving cwd, env, tty, and exit code) or prints the synthetic handoff output and exits 1. The shim contains zero decision logic.
-- **`chaosd`** is the single long-lived daemon: loads the active contract, runs the verdict pipeline from `chaos-core`, owns the Docker twin pool, holds `NEEDS_HUMAN` commands pending user decisions, and broadcasts events. Socket at `$XDG_RUNTIME_DIR/chaostwin.sock`, JSON-lines protocol.
+- **`chaosd`** is the single long-lived daemon: loads the active contract, runs the verdict pipeline from `chaos-core`, owns the Docker twin pool, holds `NEEDS_HUMAN` commands pending user decisions, and broadcasts events. Socket at `$XDG_RUNTIME_DIR/tractus.sock`, JSON-lines protocol.
 - **`control/` (FastAPI)** connects to the same socket: subscribes to the event stream for the UI WebSocket, sends `set_contract` after intent extraction, and sends `resolve` when the user clicks approve/reject. All GPT-5.6 calls live here, never in Rust, preserving the "no LLM in the enforcement path" invariant at the process boundary.
 
 ## 2. Core data types (`chaos-core`)
@@ -185,7 +185,7 @@ The same function checks twin-observed diffs: the twin's file diff is converted 
 // chaosd → ct-shim
 {"type":"verdict","id":"c17","action":"allow"}
 {"type":"verdict","id":"c17","action":"block","exit_code":1,
- "synthetic_stdout":"Command blocked by Chaos Twin: dependency changes are not in scope..."}
+ "synthetic_stdout":"Command blocked by Tractus: dependency changes are not in scope..."}
 {"type":"verdict","id":"c17","action":"hold"}            // NEEDS_HUMAN, shim waits (60 s cap)
 
 // control (FastAPI) ↔ chaosd

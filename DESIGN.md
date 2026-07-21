@@ -1,4 +1,4 @@
-# Chaos Twin — Design Doc
+# Tractus — Design Doc
 
 **Track:** Developer Tools (OpenAI Build Week, submission due Tue Jul 21, 5:00 PM PT)
 **Author:** Shreyas J Kiran
@@ -6,7 +6,7 @@
 
 ## 1. One-liner
 
-A scope firewall for autonomous coding agents. Chaos Twin turns your request into a deterministic Intent Contract, intercepts every command the agent proposes, previews the real consequences in a Docker twin, and blocks well-intentioned actions that exceed what you actually asked for.
+A scope firewall for autonomous coding agents. Tractus turns your request into a deterministic Intent Contract, intercepts every command the agent proposes, previews the real consequences in a Docker twin, and blocks well-intentioned actions that exceed what you actually asked for.
 
 ## 2. Problem
 
@@ -87,9 +87,9 @@ Wrapper the agent uses as its shell (Codex CLI hook or `SHELL=` shim). Captures 
 
 **Synthetic agent handoffs.** A block must guide the agent, not brick its loop. The interceptor never returns a bare non-zero exit code; every non-allow verdict maps to synthetic terminal output fed back to the agent as if the command had run:
 
-- `SCOPE_VIOLATION` → exit 1, stdout: `Command blocked by Chaos Twin: <violated clause>. This action is outside the approved task scope. Continue within scope, or ask the user to approve this specific action.`
-- `NEEDS_HUMAN` → the interceptor holds the command while the UI prompts the user. On approval the command runs normally; on rejection or a 60 s decision timeout: exit 1, stdout: `Command deferred by Chaos Twin: awaiting user approval. Do not retry this command; proceed with other in-scope work or ask the user.`
-- `LOOP` → exit 1, stdout: `Halted by Chaos Twin: this command has failed <n> times with the same error. Stop retrying and report the blocker to the user.`
+- `SCOPE_VIOLATION` → exit 1, stdout: `Command blocked by Tractus: <violated clause>. This action is outside the approved task scope. Continue within scope, or ask the user to approve this specific action.`
+- `NEEDS_HUMAN` → the interceptor holds the command while the UI prompts the user. On approval the command runs normally; on rejection or a 60 s decision timeout: exit 1, stdout: `Command deferred by Tractus: awaiting user approval. Do not retry this command; proceed with other in-scope work or ask the user.`
+- `LOOP` → exit 1, stdout: `Halted by Tractus: this command has failed <n> times with the same error. Stop retrying and report the blocker to the user.`
 
 Messages are written for agent consumption (imperative, next-action oriented) and tested against Codex CLI to confirm the agent asks for permission instead of thrashing.
 
@@ -167,7 +167,7 @@ Cut order if behind: pre-warmed container pool → plain container spawn; approv
 ## 10. Demo script (< 3 min, recorded Sun Jul 19)
 
 1. (0:00) Hook: "You asked your agent to fix a test. It upgraded your HTTP client instead." Show a vanilla Codex session doing exactly that, lockfile churn scrolling.
-2. (0:35) Same task through Chaos Twin: contract appears from the plain-English request, one click to confirm.
+2. (0:35) Same task through Tractus: contract appears from the plain-English request, one click to confirm.
 3. (1:00) Agent works normally; in-scope commands flow with zero friction.
 4. (1:20) The dependency upgrade attempt: contract clause flashes red, proof trace, one-sentence explanation, blocked in milliseconds. Approve-once shown as the escape hatch.
 5. (2:00) Unknown script caught by the Docker twin with the real diff rendered: "even what we can't classify, we execute in the twin first."
@@ -182,7 +182,7 @@ Cut order if behind: pre-warmed container pool → plain container spawn; approv
 | Twin too slow live | Pre-warmed pool, capped demo repo, and the video is recorded Sunday from the best take |
 | Codex CLI hook API friction | Fallback: generic `SHELL=` shim works with any agent that shells out |
 | Runaway Codex burns credits during build | Iteration caps + cache pinning + Terra for debugging |
-| "Chaos" read as Chaos Monkey clone | README and description anchor chaos to agent unpredictability: scope firewall, not stress testing |
+| "Tractus" is unfamiliar | README and description define it as a scope firewall for autonomous coding agents |
 
 ## 12. Success criteria
 

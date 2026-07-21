@@ -91,7 +91,7 @@ async fn invoke(socket: &Path, cwd: &Path, command: String) -> Output {
             .arg("-c")
             .arg(command)
             .current_dir(cwd)
-            .env("CHAOSTWIN_SOCK", socket)
+            .env("TRACTUS_SOCK", socket)
             .output()
             .unwrap()
     })
@@ -106,7 +106,7 @@ async fn invoke_repl(socket: &Path, cwd: &Path, input: Vec<u8>, path: &Path) -> 
     tokio::task::spawn_blocking(move || {
         let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_ct-shim"))
             .current_dir(cwd)
-            .env("CHAOSTWIN_SOCK", socket)
+            .env("TRACTUS_SOCK", socket)
             .env("PATH", path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -125,10 +125,10 @@ async fn shim_executes_only_allowed_commands_and_fails_closed() {
     let root = std::fs::canonicalize(std::env::temp_dir())
         .unwrap()
         .join(format!(
-            "chaostwin-shim-test-{}-{index}",
+            "tractus-shim-test-{}-{index}",
             std::process::id()
         ));
-    let socket = root.join("chaostwin.sock");
+    let socket = root.join("tractus.sock");
     std::fs::create_dir_all(&root).unwrap();
     let listener = UnixListener::bind(&socket).unwrap();
     let config = Arc::new(ServerConfig::new(
@@ -173,7 +173,7 @@ async fn shim_executes_only_allowed_commands_and_fails_closed() {
     assert!(!daemon_down.exists());
     assert_eq!(
         String::from_utf8(down.stdout).unwrap(),
-        "Chaos Twin daemon unreachable; command not executed. Start chaosd or unset SHELL.\n"
+        "Tractus daemon unreachable; command not executed. Start chaosd or unset SHELL.\n"
     );
 
     daemon.abort();
@@ -185,8 +185,8 @@ async fn repl_executes_allowed_commands_and_returns_block_handoffs() {
     let index = NEXT_TEST.fetch_add(1, Ordering::Relaxed);
     let root = std::fs::canonicalize(std::env::temp_dir())
         .unwrap()
-        .join(format!("chaostwin-repl-{}-{index}", std::process::id()));
-    let socket = root.join("chaostwin.sock");
+        .join(format!("tractus-repl-{}-{index}", std::process::id()));
+    let socket = root.join("tractus.sock");
     let bin = root.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     let fake_cargo = bin.join("cargo");

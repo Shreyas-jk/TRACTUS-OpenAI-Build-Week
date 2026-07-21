@@ -65,7 +65,7 @@ ARTIFACT_PATHS = (
     ".venv/**",
 )
 
-SYSTEM_PROMPT = """You translate a user's coding task into a least-privilege Chaos Twin Intent Contract.
+SYSTEM_PROMPT = """You translate a user's coding task into a least-privilege Tractus Intent Contract.
 
 Return only the structured contract. Apply these rules exactly:
 - NEVER emit build-artifact directories (`target/`, `node_modules/`, `**/__pycache__/`, `.venv/`) in `allowed_paths`. The control plane owns those paths and adds them after extraction.

@@ -1,4 +1,4 @@
-"""Best-effort, advisory explanations for blocked Chaos Twin events."""
+"""Best-effort, advisory explanations for blocked Tractus events."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from openai import AsyncOpenAI
 
 
 EXPLAIN_TIMEOUT_SECONDS = 5
-EXPLAINER_INSTRUCTIONS = """Explain a Chaos Twin block in exactly one plain-English sentence.
+EXPLAINER_INSTRUCTIONS = """Explain a Tractus block in exactly one plain-English sentence.
 It is advisory only: describe the contract mismatch, do not recommend bypassing enforcement.
 """
 

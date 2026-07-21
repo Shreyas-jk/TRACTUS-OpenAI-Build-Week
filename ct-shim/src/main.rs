@@ -7,9 +7,9 @@ use std::os::unix::net::UnixStream;
 use std::process::{self, Command};
 
 const DAEMON_UNREACHABLE: &str =
-    "Chaos Twin daemon unreachable; command not executed. Start chaosd or unset SHELL.";
+    "Tractus daemon unreachable; command not executed. Start chaosd or unset SHELL.";
 const USAGE: &str = "usage: ct-shim -c <command>";
-const PROMPT: &str = "chaostwin ▸ ";
+const PROMPT: &str = "tractus ▸ ";
 
 fn main() {
     process::exit(run_from_args(env::args().collect()));

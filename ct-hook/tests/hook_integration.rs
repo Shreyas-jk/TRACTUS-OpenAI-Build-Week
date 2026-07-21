@@ -13,7 +13,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 
 static NEXT_TEST: AtomicUsize = AtomicUsize::new(0);
-const UNAVAILABLE_REASON: &str = "Chaos Twin unavailable so approve manually or start chaosd.";
+const UNAVAILABLE_REASON: &str = "Tractus unavailable so approve manually or start chaosd.";
 
 fn deps_locked_contract() -> ContractSpec {
     let mut allowed_ops = OpSet::empty();
@@ -68,7 +68,7 @@ async fn invoke(socket: &Path, cwd: &Path, payload: Value) -> Output {
     tokio::task::spawn_blocking(move || {
         let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_ct-hook"))
             .current_dir(cwd)
-            .env("CHAOSTWIN_SOCK", socket)
+            .env("TRACTUS_SOCK", socket)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -100,7 +100,7 @@ async fn start_daemon(
     root: &Path,
     contract: ContractSpec,
 ) -> (std::path::PathBuf, tokio::task::JoinHandle<()>) {
-    let socket = root.join("chaostwin.sock");
+    let socket = root.join("tractus.sock");
     let listener = UnixListener::bind(&socket).unwrap();
     let config = Arc::new(ServerConfig::new(
         shared_state(),
@@ -117,7 +117,7 @@ async fn start_daemon(
 fn test_root(label: &str) -> std::path::PathBuf {
     let index = NEXT_TEST.fetch_add(1, Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!(
-        "chaostwin-hook-{label}-{}-{index}",
+        "tractus-hook-{label}-{}-{index}",
         std::process::id()
     ));
     std::fs::create_dir_all(&root).unwrap();

@@ -6,12 +6,12 @@ use std::path::Path;
 use std::process;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-#[path = "../../chaostwin_socket.rs"]
+#[path = "../../tractus_socket.rs"]
 mod socket_path;
 
 pub const HOLD_WAIT: Duration = Duration::from_secs(65);
 pub const REPORT_ACK_WAIT: Duration = Duration::from_secs(2);
-const DEFAULT_HOLD_REASON: &str = "Chaos Twin requires manual review.";
+const DEFAULT_HOLD_REASON: &str = "Tractus requires manual review.";
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub enum ResolveMode {
@@ -38,7 +38,7 @@ pub enum Response {
     Hold(String),
 }
 
-/// Submit the shared JSON-lines `propose` request used by every Chaos Twin adapter.
+/// Submit the shared JSON-lines `propose` request used by every Tractus adapter.
 pub fn request_verdict(
     command: &str,
     cwd: &Path,

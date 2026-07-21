@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Chaos Twin · Firewall Console</title>
+  <title>Tractus · Firewall Console</title>
   <link rel="stylesheet" href="/static/vendor/xterm.css">
   <style>
     :root {
@@ -55,7 +55,7 @@
     }
 
     .wordmark { color: var(--ink); letter-spacing: .08em; font-size: .83rem; font-weight: 850; white-space: nowrap; }
-    .wordmark__twin { color: var(--accent); }
+    .wordmark__brand { color: var(--accent); }
     .status-list { display: flex; align-items: center; gap: clamp(9px, 2vw, 22px); color: var(--muted); font-size: .66rem; letter-spacing: .06em; text-transform: uppercase; }
     .status { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
     .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #aeb5c0; box-shadow: 0 0 0 3px rgba(94, 103, 117, .08); }
@@ -264,7 +264,7 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="wordmark" aria-label="Chaos Twin"><span>CHAOS</span><span class="wordmark__twin">TWIN</span></div>
+    <div class="wordmark" aria-label="Tractus"><span>TRACTUS</span></div>
     <div class="status-list" aria-label="System status">
       <span class="status" id="status-daemon" data-state="offline"><i class="status-dot"></i>daemon</span>
       <span class="status" id="status-twin" data-state="offline"><i class="status-dot"></i>twin</span>
@@ -280,7 +280,7 @@
         <form id="task-form">
           <div class="eyebrow">Intent contract</div>
           <h1 class="task-form__title">Define the agent’s scope.</h1>
-          <p class="task-form__copy">Chaos Twin extracts a contract before the deterministic firewall enforces it.</p>
+          <p class="task-form__copy">Tractus extracts a contract before the deterministic firewall enforces it.</p>
           <textarea class="task-form__input" id="task-request" required placeholder="Fix the failing test in tests/api_test.rs. Do not change dependencies or use the network."></textarea>
           <button class="button" type="submit">Create contract</button>
           <p class="task-status" id="task-status" aria-live="polite"></p>
@@ -292,10 +292,10 @@
     <section class="workbench" aria-label="Agent terminal and enforcement ledger">
       <section class="terminal-pane" aria-labelledby="terminal-title">
         <header class="terminal-pane__header">
-          <div class="terminal-pane__title" id="terminal-title">AGENT <span>▸</span> chaostwin shell</div>
+          <div class="terminal-pane__title" id="terminal-title">AGENT <span>▸</span> tractus shell</div>
           <span class="terminal-pane__state" id="terminal-state" data-state="offline">connecting</span>
         </header>
-        <div class="terminal-host" id="terminal" aria-label="Chaos Twin interactive terminal"></div>
+        <div class="terminal-host" id="terminal" aria-label="Tractus interactive terminal"></div>
       </section>
 
       <section class="ledger" aria-labelledby="ledger-title">
@@ -675,9 +675,9 @@
     function formatLatency(event) { const value = event.latency_ms ?? event.latency; return value === undefined ? "latency —" : `latency ${value}${typeof value === "number" ? " ms" : ""}`; }
     function formatTime(value) { const date = new Date(value); return Number.isNaN(date.valueOf()) ? "now" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
     function fallbackHandoff(model) {
-      if (model.verdict === "loop") return "Halted by Chaos Twin: repeated failure detected. Stop retrying and report the blocker to the user.";
+      if (model.verdict === "loop") return "Halted by Tractus: repeated failure detected. Stop retrying and report the blocker to the user.";
       const clause = model.proofs?.[0]?.clause || "scope contract violated";
-      return `Command blocked by Chaos Twin: ${clause}. This action is outside the approved task scope.`;
+      return `Command blocked by Tractus: ${clause}. This action is outside the approved task scope.`;
     }
     function element(tag, className = "", text = "") { const node = document.createElement(tag); if (className) node.className = className; if (text) node.textContent = text; return node; }
 

@@ -4,7 +4,7 @@ export PATH := $(HOME)/.cargo/bin:$(PATH)
 
 twin-clean:
 	@docker ps --format '{{.Names}}' | while IFS= read -r name; do \
-		case "$$name" in chaostwin-pool-*|chaostwin-twin-*) docker kill "$$name" >/dev/null ;; esac; \
+		case "$$name" in tractus-pool-*|tractus-twin-*) docker kill "$$name" >/dev/null ;; esac; \
 	done
 
 twin-test: twin-clean

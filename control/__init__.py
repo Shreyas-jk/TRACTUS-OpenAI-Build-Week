@@ -1,4 +1,4 @@
-"""Chaos Twin's FastAPI control plane."""
+"""Tractus's FastAPI control plane."""
 
 from __future__ import annotations
 

@@ -18,9 +18,9 @@ use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
 
 const TWIN_TIMEOUT: Duration = Duration::from_secs(3);
-const OVERLAY_UNAVAILABLE: &str = "CHAOSTWIN_OVERLAY_UNAVAILABLE";
-pub const TWIN_CONTAINER_PREFIX: &str = "chaostwin-twin-";
-pub const POOL_CONTAINER_PREFIX: &str = "chaostwin-pool-";
+const OVERLAY_UNAVAILABLE: &str = "TRACTUS_OVERLAY_UNAVAILABLE";
+pub const TWIN_CONTAINER_PREFIX: &str = "tractus-twin-";
+pub const POOL_CONTAINER_PREFIX: &str = "tractus-pool-";
 static NEXT_TWIN: AtomicUsize = AtomicUsize::new(0);
 
 pub enum TwinOutcome {
@@ -92,7 +92,7 @@ impl DockerTwin {
     }
 
     async fn speculate_inner(&self, command: &SimpleCommand, cwd: &Path) -> TwinOutcome {
-        let temp = match TemporaryTree::new("chaostwin-twin") {
+        let temp = match TemporaryTree::new("tractus-twin") {
             Ok(temp) => temp,
             Err(_) => return TwinOutcome::NeedsHuman(Reason::Opaque),
         };
@@ -433,7 +433,7 @@ async fn invalidate_pool(pool: Arc<Mutex<PoolState>>, fallback: Arc<DockerTwin>)
 }
 
 async fn create_ready_unit(fallback: Arc<DockerTwin>) -> Option<ReadyUnit> {
-    let snapshot = TemporaryTree::new("chaostwin-pool").ok()?;
+    let snapshot = TemporaryTree::new("tractus-pool").ok()?;
     copy_workspace(&fallback.workspace_root, &snapshot.path).await.ok()?;
     let record = SnapshotRecord {
         created_at: SystemTime::now(),
@@ -488,7 +488,7 @@ pub async fn reap_orphaned_containers() {
         .output()
         .await
     else {
-        tracing::debug!("Docker unavailable while reaping Chaos Twin containers");
+        tracing::debug!("Docker unavailable while reaping Tractus containers");
         return;
     };
     for name in String::from_utf8_lossy(&output.stdout)
@@ -797,7 +797,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires Docker Desktop and an alpine image"]
     async fn docker_twin_observes_created_file() {
-        let root = std::env::temp_dir().join(format!("chaostwin-twin-test-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("tractus-twin-test-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         let twin = DockerTwin::new(root.clone());
         let command = simple_command(&["touch", "twin-created.txt"]);
@@ -815,7 +815,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires Docker Desktop and an alpine image"]
     async fn docker_twin_timeout_kills_the_named_container() {
-        let root = std::env::temp_dir().join(format!("chaostwin-twin-timeout-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("tractus-twin-timeout-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         let twin = DockerTwin::new(root.clone());
         let command = simple_command(&["sleep", "10"]);
@@ -841,7 +841,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires Docker Desktop and an alpine image"]
     async fn pooled_twin_reuses_two_ready_units_for_consecutive_speculations() {
-        let root = std::env::temp_dir().join(format!("chaostwin-pool-test-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("tractus-pool-test-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         let twin = PooledTwin::new(root.clone());
         twin.start();
@@ -866,7 +866,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires Docker Desktop and an alpine image"]
     async fn pooled_twin_invalidation_rebuilds_from_current_workspace() {
-        let root = std::env::temp_dir().join(format!("chaostwin-pool-stale-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("tractus-pool-stale-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         let twin = PooledTwin::new(root.clone());
         twin.start();
@@ -897,7 +897,7 @@ mod tests {
     #[ignore = "requires Docker Desktop and an alpine image"]
     async fn pooled_twin_discards_snapshot_after_out_of_band_workspace_edit() {
         let root = std::env::temp_dir().join(format!(
-            "chaostwin-pool-out-of-band-{}",
+            "tractus-pool-out-of-band-{}",
             std::process::id()
         ));
         fs::create_dir_all(&root).unwrap();
@@ -927,7 +927,7 @@ mod tests {
     #[ignore = "requires Docker Desktop and an alpine image"]
     async fn orphan_reaper_kills_a_named_pool_container() {
         reap_orphaned_containers().await;
-        let fake_name = "chaostwin-pool-99999-0";
+        let fake_name = "tractus-pool-99999-0";
         let started = Command::new("docker")
             .args([
                 "run",

@@ -11,6 +11,6 @@ for BINARY in "$ROOT_DIR/target/release/ct-hook" "$ROOT_DIR/target/debug/ct-hook
 done
 
 printf '%s\n' \
-    'Chaos Twin ct-hook binary not found. Build it with: cargo build --release --bin ct-hook' \
+    'Tractus ct-hook binary not found. Build it with: cargo build --release --bin ct-hook' \
     >&2
 exit 2

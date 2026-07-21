@@ -16,13 +16,13 @@ class DaemonProtocolError(RuntimeError):
 
 def default_socket_path() -> Path:
     """Match ct-shim's socket selection exactly."""
-    configured = os.environ.get("CHAOSTWIN_SOCK")
+    configured = os.environ.get("TRACTUS_SOCK")
     if configured:
         return Path(configured)
     runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
     if runtime_dir:
-        return Path(runtime_dir) / "chaostwin.sock"
-    return Path(f"/tmp/chaostwin-{os.getuid()}.sock")
+        return Path(runtime_dir) / "tractus.sock"
+    return Path(f"/tmp/tractus-{os.getuid()}.sock")
 
 
 class DaemonClient:
