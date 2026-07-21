@@ -1,4 +1,7 @@
-use ct_shim::{request_edit_verdict, request_verdict, ShimVerdict};
+use ct_shim::{
+    request_edit_verdict_with_resolve_mode, request_verdict_with_resolve_mode, ResolveMode,
+    ShimVerdict,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -65,18 +68,30 @@ fn run() -> Value {
             };
             let environment = env::vars().collect::<HashMap<_, _>>();
             let cwd = payload_cwd(&payload);
-            request_verdict(command, cwd, agent_session, environment)
-                .map(verdict_response)
-                .unwrap_or_else(|()| unavailable_response())
+            request_verdict_with_resolve_mode(
+                command,
+                cwd,
+                agent_session,
+                environment,
+                ResolveMode::Client,
+            )
+            .map(verdict_response)
+            .unwrap_or_else(|()| unavailable_response())
         }
         "apply_patch" => {
             let Some(paths) = touched_paths(&payload.tool_input) else {
                 return decision_response("ask", UNKNOWN_PATCH_PATHS_REASON.to_owned());
             };
             let cwd = payload_cwd(&payload);
-            request_edit_verdict(&paths.writes, &paths.deletes, cwd, agent_session)
-                .map(verdict_response)
-                .unwrap_or_else(|()| unavailable_response())
+            request_edit_verdict_with_resolve_mode(
+                &paths.writes,
+                &paths.deletes,
+                cwd,
+                agent_session,
+                ResolveMode::Client,
+            )
+            .map(verdict_response)
+            .unwrap_or_else(|()| unavailable_response())
         }
         _ => continue_response(),
     }

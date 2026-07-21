@@ -13,6 +13,12 @@ pub const HOLD_WAIT: Duration = Duration::from_secs(65);
 pub const REPORT_ACK_WAIT: Duration = Duration::from_secs(2);
 const DEFAULT_HOLD_REASON: &str = "Chaos Twin requires manual review.";
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub enum ResolveMode {
+    Daemon,
+    Client,
+}
+
 pub enum ShimVerdict {
     Allow {
         connection: UnixStream,
@@ -39,8 +45,25 @@ pub fn request_verdict(
     agent_session: &str,
     environment: HashMap<String, String>,
 ) -> Result<ShimVerdict, ()> {
+    request_verdict_with_resolve_mode(
+        command,
+        cwd,
+        agent_session,
+        environment,
+        ResolveMode::Daemon,
+    )
+}
+
+/// Submit a proposal whose human-resolution lifecycle is owned by the caller.
+pub fn request_verdict_with_resolve_mode(
+    command: &str,
+    cwd: &Path,
+    agent_session: &str,
+    environment: HashMap<String, String>,
+    resolve_mode: ResolveMode,
+) -> Result<ShimVerdict, ()> {
     let id = command_id();
-    let proposal = json!({
+    let mut proposal = json!({
         "type": "propose",
         "id": id,
         "cmd": command,
@@ -48,6 +71,9 @@ pub fn request_verdict(
         "env": environment,
         "agent_session": agent_session,
     });
+    if resolve_mode == ResolveMode::Client {
+        proposal["resolve_mode"] = json!("client");
+    }
     submit_proposal(id, proposal)
 }
 
@@ -60,12 +86,24 @@ pub fn request_edit_verdict(
     cwd: &Path,
     agent_session: &str,
 ) -> Result<ShimVerdict, ()> {
+    request_edit_verdict_with_resolve_mode(writes, deletes, cwd, agent_session, ResolveMode::Daemon)
+}
+
+/// Submit native-editor effects whose human-resolution lifecycle is owned by
+/// the caller rather than the daemon.
+pub fn request_edit_verdict_with_resolve_mode(
+    writes: &[String],
+    deletes: &[String],
+    cwd: &Path,
+    agent_session: &str,
+    resolve_mode: ResolveMode,
+) -> Result<ShimVerdict, ()> {
     if writes.is_empty() && deletes.is_empty() {
         return Err(());
     }
 
     let id = command_id();
-    let proposal = json!({
+    let mut proposal = json!({
         "type": "propose_edit",
         "id": id,
         "cwd": cwd,
@@ -73,6 +111,9 @@ pub fn request_edit_verdict(
         "deletes": deletes,
         "agent_session": agent_session,
     });
+    if resolve_mode == ResolveMode::Client {
+        proposal["resolve_mode"] = json!("client");
+    }
     submit_proposal(id, proposal)
 }
 
