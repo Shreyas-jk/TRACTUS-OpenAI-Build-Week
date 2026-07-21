@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .daemon import DaemonClient
@@ -44,6 +45,7 @@ def create_app(
     explainer = explainer or explain_divergence
     active_task = "the approved task"
     app = FastAPI(title="Chaos Twin Control Plane")
+    app.mount("/static", StaticFiles(directory=STATIC_INDEX.parent), name="static")
 
     @app.get("/", include_in_schema=False)
     async def index() -> FileResponse:

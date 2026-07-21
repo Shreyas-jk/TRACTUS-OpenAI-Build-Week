@@ -67,3 +67,17 @@ def test_task_returns_toggle_card_and_websocket_bridges_events() -> None:
 
     assert event["type"] == "blocked"
     assert explanation_update["explanation"] == "The command changes dependencies outside the approved task."
+
+
+def test_static_xterm_assets_are_served() -> None:
+    app = create_app(daemon=FakeDaemon(), extractor=fake_extractor, explainer=fake_explainer)
+
+    with TestClient(app) as client:
+        page = client.get("/")
+        xterm = client.get("/static/vendor/xterm.js")
+        fit = client.get("/static/vendor/xterm-addon-fit.js")
+        stylesheet = client.get("/static/vendor/xterm.css")
+
+    assert page.status_code == 200
+    assert "/static/vendor/xterm.js" in page.text
+    assert xterm.status_code == fit.status_code == stylesheet.status_code == 200
