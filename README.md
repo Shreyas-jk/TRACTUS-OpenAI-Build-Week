@@ -24,7 +24,7 @@ Tractus's Codex hook requires Codex CLI **v0.114 or newer** with experimental ho
 
    ```toml
    [features]
-   codex_hooks = true
+   hooks = true
    ```
 
 3. Start `chaosd`, then use the control plane to confirm an Intent Contract.
