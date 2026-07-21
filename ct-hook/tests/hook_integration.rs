@@ -195,17 +195,20 @@ async fn daemon_down_asks_for_manual_approval() {
 }
 
 #[tokio::test]
-async fn apply_patch_outside_allowed_paths_is_denied() {
-    let root = test_root("apply-patch-deny");
+async fn structured_apply_patch_delete_outside_allowed_paths_is_denied() {
+    let root = test_root("patch-del");
     let (socket, daemon) = start_daemon(&root, edit_paths_contract()).await;
-    let patch = "*** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n*** End Patch";
     let payload = json!({
         "session_id": "codex-hook-test",
         "cwd": root,
         "hook_event_name": "PreToolUse",
         "tool_name": "apply_patch",
         "tool_use_id": "tool-use-patch-1",
-        "tool_input": {"patch": patch},
+        "tool_input": {
+            "changes": [
+                {"path": "README.md", "kind": "delete"}
+            ]
+        },
     });
 
     let response = parse_output(invoke(&socket, &root, payload).await);

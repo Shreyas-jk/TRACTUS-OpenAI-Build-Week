@@ -56,10 +56,11 @@ pub fn request_verdict(
 /// evaluates the active contract.
 pub fn request_edit_verdict(
     writes: &[String],
+    deletes: &[String],
     cwd: &Path,
     agent_session: &str,
 ) -> Result<ShimVerdict, ()> {
-    if writes.is_empty() {
+    if writes.is_empty() && deletes.is_empty() {
         return Err(());
     }
 
@@ -69,6 +70,7 @@ pub fn request_edit_verdict(
         "id": id,
         "cwd": cwd,
         "writes": writes,
+        "deletes": deletes,
         "agent_session": agent_session,
     });
     submit_proposal(id, proposal)

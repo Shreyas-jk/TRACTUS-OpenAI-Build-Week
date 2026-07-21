@@ -12,6 +12,12 @@ const UNAVAILABLE_REASON: &str = "Chaos Twin unavailable so approve manually or 
 const UNKNOWN_PATCH_PATHS_REASON: &str =
     "Chaos Twin could not determine which files this patch touches, so approve manually.";
 
+#[derive(Debug, Default, Eq, PartialEq)]
+struct TouchedPaths {
+    writes: Vec<String>,
+    deletes: Vec<String>,
+}
+
 #[derive(Deserialize)]
 struct PreToolUsePayload {
     #[serde(default)]
@@ -64,11 +70,11 @@ fn run() -> Value {
                 .unwrap_or_else(|()| unavailable_response())
         }
         "apply_patch" => {
-            let Some(writes) = touched_paths(&payload.tool_input) else {
+            let Some(paths) = touched_paths(&payload.tool_input) else {
                 return decision_response("ask", UNKNOWN_PATCH_PATHS_REASON.to_owned());
             };
             let cwd = payload_cwd(&payload);
-            request_edit_verdict(&writes, cwd, agent_session)
+            request_edit_verdict(&paths.writes, &paths.deletes, cwd, agent_session)
                 .map(verdict_response)
                 .unwrap_or_else(|()| unavailable_response())
         }
@@ -109,8 +115,8 @@ fn verdict_response(verdict: ShimVerdict) -> Value {
     }
 }
 
-fn touched_paths(tool_input: &Value) -> Option<Vec<String>> {
-    let mut paths = Vec::new();
+fn touched_paths(tool_input: &Value) -> Option<TouchedPaths> {
+    let mut paths = TouchedPaths::default();
 
     if let Some(patch) = tool_input.as_str() {
         append_patch_paths(patch, &mut paths);
@@ -124,10 +130,16 @@ fn touched_paths(tool_input: &Value) -> Option<Vec<String>> {
         if let Some(entries) = tool_input.get(field).and_then(Value::as_array) {
             for entry in entries {
                 match entry {
-                    Value::String(path) => append_path(path, &mut paths),
+                    Value::String(path) => append_path(path, &mut paths.writes),
                     Value::Object(_) => {
                         if let Some(path) = entry.get("path").and_then(Value::as_str) {
-                            append_path(path, &mut paths);
+                            let kind = entry.get("kind").and_then(Value::as_str);
+                            let target = if structured_kind_is_delete(kind) {
+                                &mut paths.deletes
+                            } else {
+                                &mut paths.writes
+                            };
+                            append_path(path, target);
                         }
                     }
                     _ => {}
@@ -136,24 +148,53 @@ fn touched_paths(tool_input: &Value) -> Option<Vec<String>> {
         }
     }
 
-    (!paths.is_empty()).then_some(paths)
+    (!paths.writes.is_empty() || !paths.deletes.is_empty()).then_some(paths)
 }
 
-fn append_patch_paths(patch: &str, paths: &mut Vec<String>) {
+fn append_patch_paths(patch: &str, paths: &mut TouchedPaths) {
+    let mut pending_update = None;
+
     for line in patch.lines() {
-        let path = [
-            "*** Update File: ",
-            "*** Add File: ",
-            "*** Delete File: ",
-            "*** Move to: ",
-        ]
-        .into_iter()
-        .find_map(|prefix| line.strip_prefix(prefix));
-        let Some(path) = path.map(str::trim).filter(|path| !path.is_empty()) else {
-            continue;
-        };
-        append_path(path, paths);
+        if let Some(path) = patch_path(line, "*** Update File: ") {
+            flush_pending_update(&mut pending_update, paths);
+            pending_update = Some(path.to_owned());
+        } else if let Some(path) = patch_path(line, "*** Add File: ") {
+            flush_pending_update(&mut pending_update, paths);
+            append_path(path, &mut paths.writes);
+        } else if let Some(path) = patch_path(line, "*** Delete File: ") {
+            flush_pending_update(&mut pending_update, paths);
+            append_path(path, &mut paths.deletes);
+        } else if let Some(path) = patch_path(line, "*** Move to: ") {
+            if let Some(source) = pending_update.take() {
+                append_path(&source, &mut paths.deletes);
+            }
+            append_path(path, &mut paths.writes);
+        }
     }
+
+    flush_pending_update(&mut pending_update, paths);
+}
+
+fn patch_path<'a>(line: &'a str, prefix: &str) -> Option<&'a str> {
+    line.strip_prefix(prefix)
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+}
+
+fn flush_pending_update(pending_update: &mut Option<String>, paths: &mut TouchedPaths) {
+    if let Some(path) = pending_update.take() {
+        append_path(&path, &mut paths.writes);
+    }
+}
+
+fn structured_kind_is_delete(kind: Option<&str>) -> bool {
+    let Some(kind) = kind else {
+        return false;
+    };
+    let kind = kind.to_ascii_lowercase();
+    kind.contains("delete")
+        || kind.contains("remove")
+        || matches!(kind.as_str(), "move_source" | "rename_source")
 }
 
 fn append_path(path: &str, paths: &mut Vec<String>) {
@@ -193,10 +234,8 @@ mod tests {
         }))
         .unwrap();
 
-        assert_eq!(
-            paths,
-            ["src/lib.rs", "src/core.rs", "tests/core.rs", "old.rs"]
-        );
+        assert_eq!(paths.writes, ["src/core.rs", "tests/core.rs"]);
+        assert_eq!(paths.deletes, ["src/lib.rs", "old.rs"]);
     }
 
     #[test]
@@ -213,7 +252,8 @@ mod tests {
         }))
         .unwrap();
 
-        assert_eq!(paths, ["src/lib.rs", "tests/hook.rs", "README.md"]);
+        assert_eq!(paths.writes, ["src/lib.rs", "tests/hook.rs", "README.md"]);
+        assert_eq!(paths.deletes, ["src/lib.rs"]);
     }
 
     #[test]

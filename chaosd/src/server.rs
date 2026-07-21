@@ -145,11 +145,17 @@ async fn handle_connection(stream: UnixStream, config: Arc<ServerConfig>) -> io:
                 id,
                 cwd,
                 writes,
+                deletes,
                 agent_session,
             } => {
                 let command = format!(
-                    "apply_patch {}",
+                    "apply_patch writes=[{}] deletes=[{}]",
                     writes
+                        .iter()
+                        .map(|path| path.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                    deletes
                         .iter()
                         .map(|path| path.display().to_string())
                         .collect::<Vec<_>>()
@@ -165,6 +171,7 @@ async fn handle_connection(stream: UnixStream, config: Arc<ServerConfig>) -> io:
                     id,
                     cwd,
                     writes,
+                    deletes,
                     agent_session.unwrap_or_else(|| "default".to_owned()),
                 )
                 .await?;
@@ -181,14 +188,19 @@ async fn handle_propose_edit(
     id: String,
     cwd: PathBuf,
     writes: Vec<PathBuf>,
+    deletes: Vec<PathBuf>,
     agent_session: String,
 ) -> io::Result<()> {
-    let verdict = if writes.is_empty() {
+    let verdict = if writes.is_empty() && deletes.is_empty() {
         Verdict::NeedsHuman(Reason::Opaque)
     } else {
         let effects = Effects {
             family: Some("apply_patch".to_owned()),
             writes: writes
+                .iter()
+                .map(|path| normalize_path(&cwd, &config.workspace_root, path).path)
+                .collect(),
+            deletes: deletes
                 .iter()
                 .map(|path| normalize_path(&cwd, &config.workspace_root, path).path)
                 .collect(),
@@ -547,7 +559,10 @@ enum Request {
     ProposeEdit {
         id: String,
         cwd: PathBuf,
+        #[serde(default)]
         writes: Vec<PathBuf>,
+        #[serde(default)]
+        deletes: Vec<PathBuf>,
         #[serde(default)]
         agent_session: Option<String>,
     },
