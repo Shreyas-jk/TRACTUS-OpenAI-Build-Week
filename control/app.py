@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from .daemon import DaemonClient
 from .explain import explain_divergence
 from .intent import ARTIFACT_PATHS, ContractSpec, GitOperation, Operation, extract_intent
+from .terminal import bridge_terminal
 
 
 STATIC_INDEX = Path(__file__).parent / "static" / "index.html"
@@ -87,6 +88,10 @@ def create_app(
         finally:
             for task in tasks:
                 task.cancel()
+
+    @app.websocket("/terminal")
+    async def terminal(websocket: WebSocket) -> None:
+        await bridge_terminal(websocket)
 
     return app
 
