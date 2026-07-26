@@ -32,7 +32,9 @@ Tractus's Codex hook requires Codex CLI **v0.114 or newer** with experimental ho
 
 `ct-hook` sends proposals to the same `chaosd` instance as `ct-shim`, so the existing dashboard lights up live with no extra wiring.
 
-> **Hook schema verification pending:** `ct-hook`'s `PreToolUse` payload handling has not yet been confirmed against a live Codex run. Set `TRACTUS_HOOK_LOG=/path/to/capture.log` for that run to append the exact raw payload before parsing, then compare it with the supported fields before relying on the integration.
+> **Hook payload validation:** verified against a live Codex CLI v0.145.0 run on macOS. Both `Bash` and native `apply_patch` arrive as `PreToolUse` payloads with a string in `tool_input.command`. Set `TRACTUS_HOOK_LOG=/path/to/capture.log` to capture future version changes before relying on a new Codex release.
+
+> **Fail-closed holds:** current Codex `PreToolUse` hooks do not support `permissionDecision: "ask"`; Codex reports it as a failed hook and continues the tool call. Tractus therefore denies unresolved or unavailable requests and requires an explicit contract amendment before retrying.
 
 > Stub. Setup instructions, sample data, demo video link, and the "how GPT-5.6 and Codex were
 > used" section land before submission (Mon Jul 20), generated in the Codex session.

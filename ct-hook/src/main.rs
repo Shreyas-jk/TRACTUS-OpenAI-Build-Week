@@ -11,9 +11,10 @@ use std::io::{self, Read, Write};
 use std::panic;
 use std::path::Path;
 
-const UNAVAILABLE_REASON: &str = "Tractus unavailable so approve manually or start chaosd.";
+const UNAVAILABLE_REASON: &str =
+    "Tractus unavailable; command denied. Start chaosd and retry, or amend the contract explicitly.";
 const UNKNOWN_PATCH_PATHS_REASON: &str =
-    "Tractus could not determine which files this patch touches, so approve manually.";
+    "Tractus could not determine which files this patch touches; command denied until the paths are explicit.";
 
 #[derive(Debug, Default, Eq, PartialEq)]
 struct TouchedPaths {
@@ -80,7 +81,7 @@ fn run() -> Value {
         }
         "apply_patch" => {
             let Some(paths) = touched_paths(&payload.tool_input) else {
-                return decision_response("ask", UNKNOWN_PATCH_PATHS_REASON.to_owned());
+                return decision_response("deny", UNKNOWN_PATCH_PATHS_REASON.to_owned());
             };
             let cwd = payload_cwd(&payload);
             request_edit_verdict_with_resolve_mode(
@@ -126,7 +127,13 @@ fn verdict_response(verdict: ShimVerdict) -> Value {
     match verdict {
         ShimVerdict::Allow { .. } => continue_response(),
         ShimVerdict::Block(message) => decision_response("deny", message),
-        ShimVerdict::Hold { reason, .. } => decision_response("ask", reason),
+        // Codex v0.145 parses `ask` for PreToolUse but treats it as a hook
+        // failure and runs the tool anyway. A client-owned hold must therefore
+        // fail closed until the user amends the contract and retries.
+        ShimVerdict::Hold { reason, .. } => decision_response(
+            "deny",
+            format!("Tractus requires manual review; command denied: {reason}"),
+        ),
     }
 }
 
@@ -136,7 +143,9 @@ fn touched_paths(tool_input: &Value) -> Option<TouchedPaths> {
     if let Some(patch) = tool_input.as_str() {
         append_patch_paths(patch, &mut paths);
     }
-    for field in ["patch", "diff", "input"] {
+    // Codex's actual PreToolUse payload puts native apply_patch text here.
+    // Keep the older aliases for compatibility with earlier adapters.
+    for field in ["command", "patch", "diff", "input"] {
         if let Some(patch) = tool_input.get(field).and_then(Value::as_str) {
             append_patch_paths(patch, &mut paths);
         }
@@ -224,7 +233,7 @@ fn continue_response() -> Value {
 }
 
 fn unavailable_response() -> Value {
-    decision_response("ask", UNAVAILABLE_REASON.to_owned())
+    decision_response("deny", UNAVAILABLE_REASON.to_owned())
 }
 
 fn decision_response(decision: &str, reason: String) -> Value {
@@ -254,6 +263,29 @@ mod tests {
     }
 
     #[test]
+    fn extracts_paths_from_the_real_codex_apply_patch_command_field() {
+        let payload: PreToolUsePayload = serde_json::from_value(json!({
+            "session_id": "captured-session",
+            "cwd": "/workspace",
+            "hook_event_name": "PreToolUse",
+            "model": "gpt-5.6-terra",
+            "permission_mode": "default",
+            "tool_name": "apply_patch",
+            "tool_use_id": "exec-captured",
+            "turn_id": "turn-captured",
+            "tool_input": {
+                "command": "*** Begin Patch\n*** Add File: forbidden-smoke.txt\n+blocked\n*** End Patch"
+            }
+        }))
+        .expect("captured Codex payload should deserialize");
+
+        let paths = touched_paths(&payload.tool_input).expect("patch paths should be extracted");
+
+        assert_eq!(paths.writes, ["forbidden-smoke.txt"]);
+        assert!(paths.deletes.is_empty());
+    }
+
+    #[test]
     fn extracts_structured_apply_patch_paths() {
         let paths = touched_paths(&json!({
             "changes": [
@@ -279,6 +311,22 @@ mod tests {
         assert!(payload.session_id.is_none());
         assert!(payload.cwd.is_none());
         assert!(payload.tool_input.is_null());
+    }
+
+    #[test]
+    fn unavailable_and_hold_responses_are_fail_closed_denials() {
+        assert_eq!(
+            unavailable_response()["hookSpecificOutput"]["permissionDecision"],
+            "deny"
+        );
+        assert_eq!(
+            verdict_response(ShimVerdict::Hold {
+                connection: std::os::unix::net::UnixStream::pair().unwrap().0,
+                id: "unused".to_owned(),
+                reason: "opaque command".to_owned(),
+            })["hookSpecificOutput"]["permissionDecision"],
+            "deny"
+        );
     }
 
     #[test]

@@ -13,7 +13,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 
 static NEXT_TEST: AtomicUsize = AtomicUsize::new(0);
-const UNAVAILABLE_REASON: &str = "Tractus unavailable so approve manually or start chaosd.";
+const UNAVAILABLE_REASON: &str =
+    "Tractus unavailable; command denied. Start chaosd and retry, or amend the contract explicitly.";
 
 fn deps_locked_contract() -> ContractSpec {
     let mut allowed_ops = OpSet::empty();
@@ -173,7 +174,7 @@ async fn non_bash_tool_continues_without_a_daemon() {
 }
 
 #[tokio::test]
-async fn daemon_down_asks_for_manual_approval() {
+async fn daemon_down_denies_fail_closed() {
     let root = test_root("down");
     let response = parse_output(
         invoke(
@@ -184,13 +185,62 @@ async fn daemon_down_asks_for_manual_approval() {
         .await,
     );
 
-    assert_eq!(response["hookSpecificOutput"]["permissionDecision"], "ask");
+    assert_eq!(response["hookSpecificOutput"]["permissionDecision"], "deny");
     assert_eq!(
         response["hookSpecificOutput"]["permissionDecisionReason"],
         UNAVAILABLE_REASON
     );
     assert!(response.get("continue").is_none());
 
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn real_codex_apply_patch_command_payload_is_denied_outside_allowed_paths() {
+    let root = test_root("patch-command");
+    let (socket, daemon) = start_daemon(&root, edit_paths_contract()).await;
+    let payload = json!({
+        "session_id": "captured-codex-session",
+        "cwd": root,
+        "hook_event_name": "PreToolUse",
+        "model": "gpt-5.6-terra",
+        "permission_mode": "default",
+        "tool_name": "apply_patch",
+        "tool_use_id": "exec-captured",
+        "turn_id": "turn-captured",
+        "tool_input": {
+            "command": "*** Begin Patch\n*** Add File: forbidden-smoke.txt\n+blocked\n*** End Patch"
+        },
+    });
+
+    let response = parse_output(invoke(&socket, &root, payload).await);
+
+    assert_eq!(response["hookSpecificOutput"]["permissionDecision"], "deny");
+    assert_eq!(
+        response["hookSpecificOutput"]["permissionDecisionReason"],
+        handoff::scope_violation("R-PATH-01: path matches allowed_paths")
+    );
+
+    daemon.abort();
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn needs_human_is_denied_instead_of_returning_unsupported_ask() {
+    let root = test_root("hold");
+    let (socket, daemon) = start_daemon(&root, deps_locked_contract()).await;
+
+    let response =
+        parse_output(invoke(&socket, &root, payload(&root, "Bash", "eval echo opaque")).await);
+
+    assert_eq!(response["hookSpecificOutput"]["permissionDecision"], "deny");
+    assert!(response["hookSpecificOutput"]["permissionDecisionReason"]
+        .as_str()
+        .is_some_and(
+            |reason| reason.starts_with("Tractus requires manual review; command denied:")
+        ));
+
+    daemon.abort();
     let _ = std::fs::remove_dir_all(root);
 }
 
