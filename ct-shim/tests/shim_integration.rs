@@ -124,10 +124,7 @@ async fn shim_executes_only_allowed_commands_and_fails_closed() {
     let index = NEXT_TEST.fetch_add(1, Ordering::Relaxed);
     let root = std::fs::canonicalize(std::env::temp_dir())
         .unwrap()
-        .join(format!(
-            "tractus-shim-test-{}-{index}",
-            std::process::id()
-        ));
+        .join(format!("tractus-shim-test-{}-{index}", std::process::id()));
     let socket = root.join("tractus.sock");
     std::fs::create_dir_all(&root).unwrap();
     let listener = UnixListener::bind(&socket).unwrap();

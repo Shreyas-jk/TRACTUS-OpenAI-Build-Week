@@ -112,7 +112,10 @@ mod tests {
     use super::*;
 
     fn command(arguments: &[&str]) -> Vec<String> {
-        arguments.iter().map(|argument| (*argument).to_owned()).collect()
+        arguments
+            .iter()
+            .map(|argument| (*argument).to_owned())
+            .collect()
     }
 
     fn record(history: &mut History, arguments: &[&str], exit_class: ExitClass) {
@@ -181,18 +184,10 @@ mod tests {
 
     #[test]
     fn flags_are_order_independent_but_exit_class_is_part_of_the_signature() {
-        let first = command_signature(
-            &command(&["rm", "-r", "-f", "tmp"]),
-            ExitClass::NonZero,
-        );
-        let reordered = command_signature(
-            &command(&["rm", "-f", "-r", "other"]),
-            ExitClass::NonZero,
-        );
-        let signal = command_signature(
-            &command(&["rm", "-r", "-f", "tmp"]),
-            ExitClass::Signal,
-        );
+        let first = command_signature(&command(&["rm", "-r", "-f", "tmp"]), ExitClass::NonZero);
+        let reordered =
+            command_signature(&command(&["rm", "-f", "-r", "other"]), ExitClass::NonZero);
+        let signal = command_signature(&command(&["rm", "-r", "-f", "tmp"]), ExitClass::Signal);
 
         assert_eq!(first, reordered);
         assert_ne!(first, signal);

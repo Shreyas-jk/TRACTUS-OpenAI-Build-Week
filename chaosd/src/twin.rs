@@ -1,7 +1,7 @@
 use chaos_core::contract::{DepChange, Effects, OpClass, Reason};
 use chaos_core::parse::SimpleCommand;
-use std::future::Future;
 use std::fs;
+use std::future::Future;
 use std::io;
 #[cfg(unix)]
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
@@ -99,10 +99,7 @@ impl DockerTwin {
         let command = render_command(command);
         let overlay_name = container_name("overlay");
 
-        match self
-            .run_overlay(&temp, &overlay_name, &command, cwd)
-            .await
-        {
+        match self.run_overlay(&temp, &overlay_name, &command, cwd).await {
             Ok(output) if overlay_unavailable(&output) => {
                 // Docker Desktop's Linux VM owns overlayfs. Some host bind-mount
                 // layouts cannot back an overlay upperdir, so fall back to a
@@ -169,7 +166,11 @@ impl DockerTwin {
         cwd: &Path,
     ) -> TwinOutcome {
         let snapshot = temp.path.join("snapshot");
-        if fs::create_dir_all(&snapshot).is_err() || copy_workspace(&self.workspace_root, &snapshot).await.is_err() {
+        if fs::create_dir_all(&snapshot).is_err()
+            || copy_workspace(&self.workspace_root, &snapshot)
+                .await
+                .is_err()
+        {
             return TwinOutcome::NeedsHuman(Reason::Opaque);
         }
 
@@ -342,9 +343,11 @@ impl PooledTwin {
             )
             .await;
         let effects = match output {
-            Ok(_) => effects_from_recursive_diff(&self.fallback.workspace_root, &ready.snapshot.path)
-                .map(TwinOutcome::Effects)
-                .unwrap_or(TwinOutcome::NeedsHuman(Reason::Opaque)),
+            Ok(_) => {
+                effects_from_recursive_diff(&self.fallback.workspace_root, &ready.snapshot.path)
+                    .map(TwinOutcome::Effects)
+                    .unwrap_or(TwinOutcome::NeedsHuman(Reason::Opaque))
+            }
             Err(TwinError::Timeout) => TwinOutcome::NeedsHuman(Reason::TwinTimeout),
             Err(TwinError::Unavailable) => TwinOutcome::NeedsHuman(Reason::Opaque),
         };
@@ -434,7 +437,9 @@ async fn invalidate_pool(pool: Arc<Mutex<PoolState>>, fallback: Arc<DockerTwin>)
 
 async fn create_ready_unit(fallback: Arc<DockerTwin>) -> Option<ReadyUnit> {
     let snapshot = TemporaryTree::new("tractus-pool").ok()?;
-    copy_workspace(&fallback.workspace_root, &snapshot.path).await.ok()?;
+    copy_workspace(&fallback.workspace_root, &snapshot.path)
+        .await
+        .ok()?;
     let record = SnapshotRecord {
         created_at: SystemTime::now(),
         workspace: workspace_fingerprint(&fallback.workspace_root).ok()?,
@@ -553,7 +558,10 @@ fn shell_quote(value: &str) -> String {
 
 fn container_name(kind: &str) -> String {
     let sequence = NEXT_TWIN.fetch_add(1, Ordering::Relaxed);
-    format!("{TWIN_CONTAINER_PREFIX}{kind}-{}-{sequence}", std::process::id())
+    format!(
+        "{TWIN_CONTAINER_PREFIX}{kind}-{}-{sequence}",
+        std::process::id()
+    )
 }
 
 fn pool_container_name() -> String {
@@ -600,7 +608,9 @@ fn collect_upperdir_effects(
             .unwrap_or_else(|| Path::new(""));
         if let Some(deleted) = file_name.strip_prefix(".wh.") {
             if deleted != ".wh..opq" {
-                effects.deletes.push(workspace_root.join(relative_parent).join(deleted));
+                effects
+                    .deletes
+                    .push(workspace_root.join(relative_parent).join(deleted));
             }
             continue;
         }
@@ -815,7 +825,8 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires Docker Desktop and an alpine image"]
     async fn docker_twin_timeout_kills_the_named_container() {
-        let root = std::env::temp_dir().join(format!("tractus-twin-timeout-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("tractus-twin-timeout-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         let twin = DockerTwin::new(root.clone());
         let command = simple_command(&["sleep", "10"]);
@@ -823,7 +834,10 @@ mod tests {
         let started = Instant::now();
         let outcome = twin.speculate(&command, &root).await;
         assert!(started.elapsed() < Duration::from_secs(5));
-        assert!(matches!(outcome, TwinOutcome::NeedsHuman(Reason::TwinTimeout)));
+        assert!(matches!(
+            outcome,
+            TwinOutcome::NeedsHuman(Reason::TwinTimeout)
+        ));
 
         let containers = Command::new("docker")
             .args(["ps", "--format", "{{.Names}}"])
@@ -832,7 +846,9 @@ mod tests {
             .unwrap();
         let names = String::from_utf8_lossy(&containers.stdout);
         assert!(
-            names.lines().all(|name| !name.starts_with(TWIN_CONTAINER_PREFIX)),
+            names
+                .lines()
+                .all(|name| !name.starts_with(TWIN_CONTAINER_PREFIX)),
             "twin container remained after timeout: {names}"
         );
         let _ = fs::remove_dir_all(root);
@@ -873,7 +889,10 @@ mod tests {
         wait_for_ready(&twin).await;
 
         let first = simple_command(&["touch", "first.txt"]);
-        assert!(matches!(twin.speculate(&first, &root).await, TwinOutcome::Effects(_)));
+        assert!(matches!(
+            twin.speculate(&first, &root).await,
+            TwinOutcome::Effects(_)
+        ));
 
         let current = root.join("created-after-first-speculation.txt");
         fs::write(&current, "current workspace state").unwrap();
@@ -896,10 +915,8 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires Docker Desktop and an alpine image"]
     async fn pooled_twin_discards_snapshot_after_out_of_band_workspace_edit() {
-        let root = std::env::temp_dir().join(format!(
-            "tractus-pool-out-of-band-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("tractus-pool-out-of-band-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         let twin = PooledTwin::new(root.clone());
         twin.start();

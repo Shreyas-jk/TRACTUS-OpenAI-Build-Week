@@ -1,5 +1,5 @@
 use crate::handoff;
-use crate::state::{HoldDecision, PendingReport, SharedState};
+use crate::state::{HoldDecision, PendingReport, SessionKey, SharedState};
 use crate::twin::{TwinExecutor, TwinOutcome};
 use chaos_core::classify::{classify, Classification};
 use chaos_core::contract::{ContractSpec, Effects, OpClass, ProofTrace, Reason, Verdict};
@@ -10,6 +10,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io;
+use std::os::unix::net::UnixStream as StdUnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -46,7 +47,21 @@ pub fn default_socket_path() -> PathBuf {
 pub fn bind_default_listener() -> io::Result<UnixListener> {
     let socket_path = default_socket_path();
     if socket_path.exists() {
-        std::fs::remove_file(&socket_path)?;
+        // Never unlink a live peer's address. A second launcher can race us,
+        // and unlinking its socket would make an otherwise healthy daemon
+        // unreachable. Only stale socket files are safe to remove.
+        match StdUnixStream::connect(&socket_path) {
+            Ok(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::AddrInUse,
+                    format!(
+                        "Tractus daemon is already listening at {}",
+                        socket_path.display()
+                    ),
+                ));
+            }
+            Err(_) => std::fs::remove_file(&socket_path)?,
+        }
     }
     UnixListener::bind(socket_path)
 }
@@ -88,17 +103,49 @@ async fn handle_connection(stream: UnixStream, config: Arc<ServerConfig>) -> io:
                 }
                 return Ok(());
             }
-            Request::SetContract { contract } => {
+            Request::SetContract {
+                contract,
+                contract_id,
+                workspace_root,
+            } => {
+                let contract_id = normalize_contract_id(contract_id)?;
+                if let Some(contract_id) = &contract_id {
+                    if !workspace_root
+                        .as_deref()
+                        .is_some_and(|root| workspace_roots_match(root, &config.workspace_root))
+                    {
+                        let response = json!({
+                            "type": "error",
+                            "code": "workspace_mismatch",
+                            "message": "named Tractus contracts must name this daemon's workspace",
+                            "contract_id": contract_id,
+                            "workspace_root": config.workspace_root,
+                        });
+                        write_json(&mut write_half, &response).await?;
+                        continue;
+                    }
+                }
                 let compiled = contract.compile(&config.workspace_root).map_err(|error| {
                     io::Error::new(io::ErrorKind::InvalidInput, error.to_string())
                 })?;
-                config.state.lock().await.active_contract = Some(Arc::new(compiled));
-                emit(&config, json!({"type": "contract", "action": "set"}));
-                write_json(
-                    &mut write_half,
-                    &json!({"type": "contract", "action": "set"}),
-                )
-                .await?;
+                {
+                    let mut state = config.state.lock().await;
+                    if let Some(contract_id) = &contract_id {
+                        state
+                            .contracts
+                            .insert(contract_id.clone(), Arc::new(compiled));
+                    } else {
+                        state.active_contract = Some(Arc::new(compiled));
+                    }
+                }
+                let response = json!({
+                    "type": "contract",
+                    "action": "set",
+                    "contract_id": contract_id,
+                    "workspace_root": config.workspace_root,
+                });
+                emit(&config, response.clone());
+                write_json(&mut write_half, &response).await?;
             }
             Request::Report { id, exit_code } => {
                 let recorded = record_report(&config.state, &id, exit_code).await;
@@ -128,9 +175,13 @@ async fn handle_connection(stream: UnixStream, config: Arc<ServerConfig>) -> io:
                 cwd,
                 env,
                 agent_session,
+                contract_id,
                 resolve_mode,
             } => {
-                emit(&config, json!({"type": "proposed", "id": id, "cmd": cmd}));
+                emit(
+                    &config,
+                    json!({"type": "proposed", "id": id, "cmd": cmd, "contract_id": contract_id}),
+                );
                 handle_propose(
                     &mut write_half,
                     &config,
@@ -139,6 +190,7 @@ async fn handle_connection(stream: UnixStream, config: Arc<ServerConfig>) -> io:
                     cwd,
                     env,
                     agent_session.unwrap_or_else(|| "default".to_owned()),
+                    contract_id,
                     resolve_mode,
                 )
                 .await?;
@@ -148,6 +200,8 @@ async fn handle_connection(stream: UnixStream, config: Arc<ServerConfig>) -> io:
                 cwd,
                 writes,
                 deletes,
+                agent_session,
+                contract_id,
                 resolve_mode,
             } => {
                 let command = format!(
@@ -165,7 +219,7 @@ async fn handle_connection(stream: UnixStream, config: Arc<ServerConfig>) -> io:
                 );
                 emit(
                     &config,
-                    json!({"type": "proposed", "id": id, "cmd": command}),
+                    json!({"type": "proposed", "id": id, "cmd": command, "contract_id": contract_id}),
                 );
                 handle_propose_edit(
                     &mut write_half,
@@ -174,6 +228,8 @@ async fn handle_connection(stream: UnixStream, config: Arc<ServerConfig>) -> io:
                     cwd,
                     writes,
                     deletes,
+                    agent_session.unwrap_or_else(|| "default".to_owned()),
+                    contract_id,
                     resolve_mode,
                 )
                 .await?;
@@ -191,25 +247,22 @@ async fn handle_propose_edit(
     cwd: PathBuf,
     writes: Vec<PathBuf>,
     deletes: Vec<PathBuf>,
+    agent_session: String,
+    contract_id: Option<String>,
     resolve_mode: ResolveMode,
 ) -> io::Result<()> {
     let verdict = if writes.is_empty() && deletes.is_empty() {
         Verdict::NeedsHuman(Reason::Opaque)
     } else {
-        let effects = Effects {
-            family: Some("apply_patch".to_owned()),
-            writes: writes
-                .iter()
-                .map(|path| normalize_path(&cwd, &config.workspace_root, path).path)
-                .collect(),
-            deletes: deletes
-                .iter()
-                .map(|path| normalize_path(&cwd, &config.workspace_root, path).path)
-                .collect(),
-            op: OpClass::Edit,
-            ..Effects::default()
-        };
-        evaluate_edit_effects(config, effects).await
+        evaluate_edit_effects(
+            config,
+            &cwd,
+            &writes,
+            &deletes,
+            &agent_session,
+            contract_id.as_deref(),
+        )
+        .await
     };
 
     respond(
@@ -231,9 +284,26 @@ async fn handle_propose(
     cwd: PathBuf,
     env: HashMap<String, String>,
     agent_session: String,
+    contract_id: Option<String>,
     resolve_mode: ResolveMode,
 ) -> io::Result<()> {
-    let pipeline = evaluate(&config, &raw_command, &cwd, &env, &agent_session).await;
+    let pipeline = evaluate(
+        &config,
+        &raw_command,
+        &cwd,
+        &env,
+        &agent_session,
+        contract_id.as_deref(),
+    )
+    .await;
+
+    let on_approve = pipeline
+        .session_key
+        .map(|session_key| ApproveAction::SavePendingReport {
+            session_key,
+            commands: pipeline.commands,
+        })
+        .unwrap_or(ApproveAction::None);
 
     respond(
         writer,
@@ -241,17 +311,14 @@ async fn handle_propose(
         id,
         pipeline.verdict,
         resolve_mode,
-        ApproveAction::SavePendingReport {
-            agent_session,
-            commands: pipeline.commands,
-        },
+        on_approve,
     )
     .await
 }
 
 enum ApproveAction {
     SavePendingReport {
-        agent_session: String,
+        session_key: SessionKey,
         commands: Vec<Vec<String>>,
     },
     None,
@@ -350,9 +417,9 @@ async fn respond(
 async fn apply_approve_action(action: ApproveAction, state: &SharedState, id: &str) {
     match action {
         ApproveAction::SavePendingReport {
-            agent_session,
+            session_key,
             commands,
-        } => save_pending_report(state, id, &agent_session, commands).await,
+        } => save_pending_report(state, id, session_key, commands).await,
         ApproveAction::None => {}
     }
 }
@@ -366,9 +433,33 @@ fn needs_human_reason(reason: &Reason) -> &'static str {
     }
 }
 
+fn normalize_contract_id(contract_id: Option<String>) -> io::Result<Option<String>> {
+    match contract_id {
+        Some(contract_id) if contract_id.trim().is_empty() => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "contract_id must not be empty when supplied",
+        )),
+        Some(contract_id) => Ok(Some(contract_id)),
+        None => Ok(None),
+    }
+}
+
+/// Compare roots using the filesystem when possible, but retain lexical
+/// equality for isolated protocol tests and for a daemon that starts before a
+/// workspace path becomes available. The launcher canonicalizes before it
+/// sends, so a true cross-workspace socket reuse cannot pass this check.
+fn workspace_roots_match(expected: &Path, actual: &Path) -> bool {
+    canonical_or_original(expected) == canonical_or_original(actual)
+}
+
+fn canonical_or_original(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
 struct PipelineResult {
     verdict: Verdict,
     commands: Vec<Vec<String>>,
+    session_key: Option<SessionKey>,
 }
 
 async fn evaluate(
@@ -377,31 +468,36 @@ async fn evaluate(
     cwd: &Path,
     env: &HashMap<String, String>,
     agent_session: &str,
+    contract_id: Option<&str>,
 ) -> PipelineResult {
-    let (contract, history) = {
+    let (contract, history, session_key) = {
         let mut state = config.state.lock().await;
+        let Some((contract, session_key)) = state.resolve_contract(agent_session, contract_id)
+        else {
+            return PipelineResult {
+                verdict: Verdict::NeedsHuman(Reason::ContractAmbiguous),
+                commands: Vec::new(),
+                session_key: None,
+            };
+        };
         let history = state
             .histories
-            .entry(agent_session.to_owned())
+            .entry(session_key.clone())
             .or_insert_with(History::default)
             .clone();
-        (state.active_contract.clone(), history)
-    };
-    let Some(contract) = contract else {
-        return PipelineResult {
-            verdict: Verdict::NeedsHuman(Reason::ContractAmbiguous),
-            commands: Vec::new(),
-        };
+        (contract, history, session_key)
     };
 
     match parse_with_env(raw_command, env) {
         ParseOutcome::Opaque(_) => PipelineResult {
             verdict: Verdict::NeedsHuman(Reason::Opaque),
             commands: Vec::new(),
+            session_key: Some(session_key),
         },
         ParseOutcome::NeedsHuman(reason) => PipelineResult {
             verdict: Verdict::NeedsHuman(reason),
             commands: Vec::new(),
+            session_key: Some(session_key),
         },
         ParseOutcome::Commands(commands) => {
             let mut verdicts = Vec::with_capacity(commands.len());
@@ -411,11 +507,11 @@ async fn evaluate(
                 .collect();
 
             for command in &commands {
-                let classification = classify(command, cwd, &config.workspace_root);
+                let classification = classify(command, cwd, &contract.workspace_root);
                 let verdict = match classification {
                     Classification::Effects(_) => {
                         let effects =
-                            assemble(command, classification, cwd, &config.workspace_root);
+                            assemble(command, classification, cwd, &contract.workspace_root);
                         check(&effects, &contract, &history)
                     }
                     Classification::Unclassified => match config.twin.speculate(command, cwd).await
@@ -430,15 +526,41 @@ async fn evaluate(
             PipelineResult {
                 verdict: combine_verdicts(verdicts),
                 commands: report_commands,
+                session_key: Some(session_key),
             }
         }
     }
 }
 
-async fn evaluate_edit_effects(config: &Arc<ServerConfig>, effects: Effects) -> Verdict {
-    let contract = config.state.lock().await.active_contract.clone();
+async fn evaluate_edit_effects(
+    config: &Arc<ServerConfig>,
+    cwd: &Path,
+    writes: &[PathBuf],
+    deletes: &[PathBuf],
+    agent_session: &str,
+    contract_id: Option<&str>,
+) -> Verdict {
+    let contract = {
+        let mut state = config.state.lock().await;
+        state
+            .resolve_contract(agent_session, contract_id)
+            .map(|(contract, _)| contract)
+    };
     let Some(contract) = contract else {
         return Verdict::NeedsHuman(Reason::ContractAmbiguous);
+    };
+    let effects = Effects {
+        family: Some("apply_patch".to_owned()),
+        writes: writes
+            .iter()
+            .map(|path| normalize_path(cwd, &contract.workspace_root, path).path)
+            .collect(),
+        deletes: deletes
+            .iter()
+            .map(|path| normalize_path(cwd, &contract.workspace_root, path).path)
+            .collect(),
+        op: OpClass::Edit,
+        ..Effects::default()
     };
 
     // Native editor calls have no report/exit status, so they cannot contribute
@@ -449,13 +571,13 @@ async fn evaluate_edit_effects(config: &Arc<ServerConfig>, effects: Effects) -> 
 async fn save_pending_report(
     state: &SharedState,
     id: &str,
-    agent_session: &str,
+    session_key: SessionKey,
     commands: Vec<Vec<String>>,
 ) {
     state.lock().await.pending_reports.insert(
         id.to_owned(),
         PendingReport {
-            agent_session: agent_session.to_owned(),
+            session_key,
             commands,
         },
     );
@@ -474,7 +596,7 @@ async fn record_report(state: &SharedState, id: &str, exit_code: Option<i32>) ->
     let mut state = state.lock().await;
     let history = state
         .histories
-        .entry(report.agent_session)
+        .entry(report.session_key)
         .or_insert_with(History::default);
     for command in report.commands {
         history.record_execution(&command, exit_class);
@@ -545,6 +667,8 @@ enum Request {
         #[serde(default)]
         agent_session: Option<String>,
         #[serde(default)]
+        contract_id: Option<String>,
+        #[serde(default)]
         resolve_mode: ResolveMode,
     },
     ProposeEdit {
@@ -554,6 +678,10 @@ enum Request {
         writes: Vec<PathBuf>,
         #[serde(default)]
         deletes: Vec<PathBuf>,
+        #[serde(default)]
+        agent_session: Option<String>,
+        #[serde(default)]
+        contract_id: Option<String>,
         #[serde(default)]
         resolve_mode: ResolveMode,
     },
@@ -565,6 +693,10 @@ enum Request {
     Subscribe,
     SetContract {
         contract: ContractSpec,
+        #[serde(default)]
+        contract_id: Option<String>,
+        #[serde(default)]
+        workspace_root: Option<PathBuf>,
     },
     Resolve {
         id: String,
@@ -596,6 +728,7 @@ mod tests {
     use crate::twin::NoTwin;
     use chaos_core::contract::{GitOp, GitOpSet, OpClass, OpSet};
     use serde_json::json;
+    use std::fs;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static NEXT_SOCKET: AtomicUsize = AtomicUsize::new(0);
@@ -757,5 +890,185 @@ mod tests {
 
         daemon.abort();
         let _ = std::fs::remove_file(socket);
+    }
+
+    #[tokio::test]
+    async fn named_contracts_do_not_fallback_to_the_legacy_contract() {
+        let suffix = NEXT_SOCKET.fetch_add(1, Ordering::Relaxed);
+        let socket = std::env::temp_dir().join(format!(
+            "tractus-named-contract-test-{}-{suffix}.sock",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&socket);
+        let listener = UnixListener::bind(&socket).unwrap();
+        let config = Arc::new(ServerConfig::new(
+            shared_state(),
+            PathBuf::from("/workspace/repo"),
+            Arc::new(NoTwin),
+        ));
+        let daemon = tokio::spawn(serve(listener, Arc::clone(&config)));
+
+        let mut control = client(&socket).await;
+        send_and_read(
+            &mut control,
+            json!({"type": "set_contract", "contract": test_contract()}),
+        )
+        .await;
+
+        let mut read_only = test_contract();
+        read_only.allowed_ops = OpSet::empty();
+        read_only.allowed_ops.insert(OpClass::Read);
+        let wrong_workspace = send_and_read(
+            &mut control,
+            json!({
+                "type": "set_contract",
+                "contract_id": "wrong-workspace-contract",
+                "workspace_root": "/another/workspace",
+                "contract": read_only,
+            }),
+        )
+        .await;
+        assert_eq!(wrong_workspace["type"], "error");
+        assert_eq!(wrong_workspace["code"], "workspace_mismatch");
+        assert!(config
+            .state
+            .lock()
+            .await
+            .contracts
+            .get("wrong-workspace-contract")
+            .is_none());
+
+        let mut read_only = test_contract();
+        read_only.allowed_ops = OpSet::empty();
+        read_only.allowed_ops.insert(OpClass::Read);
+        let named_response = send_and_read(
+            &mut control,
+            json!({
+                "type": "set_contract",
+                "contract_id": "read-only-contract",
+                "workspace_root": "/workspace/repo",
+                "contract": read_only,
+            }),
+        )
+        .await;
+        assert_eq!(named_response["contract_id"], "read-only-contract");
+
+        let mut shim = client(&socket).await;
+        let named_block = send_and_read(
+            &mut shim,
+            json!({
+                "type": "propose",
+                "id": "named-block",
+                "cmd": "cargo test",
+                "cwd": "/workspace/repo",
+                "agent_session": "same-codex-session",
+                "contract_id": "read-only-contract",
+                "resolve_mode": "client",
+            }),
+        )
+        .await;
+        assert_eq!(named_block["action"], "block");
+        assert_eq!(named_block["proofs"][0]["rule"], "R-OP-01");
+
+        let same_session_without_id = send_and_read(
+            &mut shim,
+            json!({
+                "type": "propose",
+                "id": "sticky-named-block",
+                "cmd": "cargo test",
+                "cwd": "/workspace/repo",
+                "agent_session": "same-codex-session",
+                "resolve_mode": "client",
+            }),
+        )
+        .await;
+        assert_eq!(same_session_without_id["action"], "block");
+        assert_eq!(same_session_without_id["proofs"][0]["rule"], "R-OP-01");
+
+        let unknown = send_and_read(
+            &mut shim,
+            json!({
+                "type": "propose",
+                "id": "unknown-contract",
+                "cmd": "cargo test",
+                "cwd": "/workspace/repo",
+                "agent_session": "same-codex-session",
+                "contract_id": "not-registered",
+                "resolve_mode": "client",
+            }),
+        )
+        .await;
+        assert_eq!(unknown["action"], "hold");
+        assert_eq!(
+            unknown["reason"],
+            "Tractus has no active contract for this command."
+        );
+
+        let legacy_allow = send_and_read(
+            &mut shim,
+            json!({
+                "type": "propose",
+                "id": "legacy-allow",
+                "cmd": "cargo test",
+                "cwd": "/workspace/repo",
+                "agent_session": "different-legacy-session",
+            }),
+        )
+        .await;
+        assert_eq!(legacy_allow["action"], "allow");
+
+        let mut edit_only = test_contract();
+        edit_only.allowed_paths = vec!["tests/**".to_owned()];
+        edit_only.allowed_ops = OpSet::empty();
+        edit_only.allowed_ops.insert(OpClass::Edit);
+        let edit_response = send_and_read(
+            &mut control,
+            json!({
+                "type": "set_contract",
+                "contract_id": "tests-only-edit",
+                "workspace_root": "/workspace/repo",
+                "contract": edit_only,
+            }),
+        )
+        .await;
+        assert_eq!(edit_response["contract_id"], "tests-only-edit");
+
+        let edit_block = send_and_read(
+            &mut shim,
+            json!({
+                "type": "propose_edit",
+                "id": "named-edit-block",
+                "cwd": "/workspace/repo",
+                "writes": ["src/forbidden.rs"],
+                "agent_session": "same-codex-session",
+                "contract_id": "tests-only-edit",
+                "resolve_mode": "client",
+            }),
+        )
+        .await;
+        assert_eq!(edit_block["action"], "block");
+        assert_eq!(edit_block["proofs"][0]["rule"], "R-PATH-01");
+
+        daemon.abort();
+        let _ = std::fs::remove_file(socket);
+    }
+
+    #[test]
+    fn workspace_identity_uses_canonical_paths_when_available() {
+        let root = std::env::temp_dir().join(format!(
+            "tractus-workspace-identity-{}-{}",
+            std::process::id(),
+            NEXT_SOCKET.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        assert!(workspace_roots_match(
+            &root,
+            &fs::canonicalize(&root).unwrap()
+        ));
+        assert!(!workspace_roots_match(
+            &root,
+            Path::new("/another/workspace")
+        ));
+        let _ = std::fs::remove_dir_all(root);
     }
 }

@@ -20,7 +20,10 @@ pub fn classify(command: &SimpleCommand, cwd: &Path, workspace_root: &Path) -> C
         .and_then(|name| name.to_str())
         .unwrap_or(argv0);
 
-    let Some(entry) = corpus().iter().find(|entry| entry.matches(argv0, &command.argv)) else {
+    let Some(entry) = corpus()
+        .iter()
+        .find(|entry| entry.matches(argv0, &command.argv))
+    else {
         return Classification::Unclassified;
     };
 
@@ -254,7 +257,11 @@ mod tests {
             ParseOutcome::Commands(mut commands) => commands.remove(0),
             outcome => panic!("expected a command, got {outcome:?}"),
         };
-        match classify(&command, Path::new("/workspace/repo"), Path::new("/workspace/repo")) {
+        match classify(
+            &command,
+            Path::new("/workspace/repo"),
+            Path::new("/workspace/repo"),
+        ) {
             Classification::Effects(effects) => effects,
             Classification::Unclassified => panic!("expected {raw:?} to be classified"),
         }
@@ -350,14 +357,22 @@ mod tests {
     fn classifies_rm() {
         let effects = classify_command("rm -rf tmp/cache");
         assert_eq!(effects.op, OpClass::Delete);
-        assert_eq!(effects.deletes, [PathBuf::from("/workspace/repo/tmp/cache")]);
+        assert_eq!(
+            effects.deletes,
+            [PathBuf::from("/workspace/repo/tmp/cache")]
+        );
         assert!(effects.recursive);
         assert!(effects.forced);
     }
 
     #[test]
     fn rm_short_flags_escalate_in_any_combination() {
-        for command in ["rm -r cache", "rm -R cache", "rm -fr cache", "rm -r -f cache"] {
+        for command in [
+            "rm -r cache",
+            "rm -R cache",
+            "rm -fr cache",
+            "rm -r -f cache",
+        ] {
             let effects = classify_command(command);
             assert!(effects.recursive, "{command}");
             assert!(effects.forced || !command.contains('f'), "{command}");
@@ -372,14 +387,20 @@ mod tests {
     fn classifies_mv() {
         let effects = classify_command("mv source destination");
         assert_eq!(effects.deletes, [PathBuf::from("/workspace/repo/source")]);
-        assert_eq!(effects.writes, [PathBuf::from("/workspace/repo/destination")]);
+        assert_eq!(
+            effects.writes,
+            [PathBuf::from("/workspace/repo/destination")]
+        );
     }
 
     #[test]
     fn classifies_cp() {
         let effects = classify_command("cp source destination");
         assert_eq!(effects.reads, [PathBuf::from("/workspace/repo/source")]);
-        assert_eq!(effects.writes, [PathBuf::from("/workspace/repo/destination")]);
+        assert_eq!(
+            effects.writes,
+            [PathBuf::from("/workspace/repo/destination")]
+        );
     }
 
     #[test]
@@ -418,7 +439,11 @@ mod tests {
         };
 
         assert!(matches!(
-            classify(&command, Path::new("/workspace/repo"), Path::new("/workspace/repo")),
+            classify(
+                &command,
+                Path::new("/workspace/repo"),
+                Path::new("/workspace/repo")
+            ),
             Classification::Unclassified
         ));
     }

@@ -15,10 +15,19 @@ class DaemonProtocolError(RuntimeError):
 
 
 def default_socket_path() -> Path:
-    """Match ct-shim's socket selection exactly."""
+    """Find the workspace daemon first, then retain the legacy shared default."""
     configured = os.environ.get("TRACTUS_SOCK")
     if configured:
         return Path(configured)
+    workspace_root = os.environ.get("TRACTUS_WORKSPACE_ROOT")
+    if workspace_root:
+        return Path(workspace_root) / ".tractus" / "chaosd.sock"
+    # `tractus codex` owns a daemon per workspace. When the dashboard is
+    # started from that repository, its contract directory is sufficient to
+    # select the same socket without making the presenter export an env var.
+    local_store = Path.cwd() / ".tractus"
+    if local_store.is_dir():
+        return local_store / "chaosd.sock"
     runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
     if runtime_dir:
         return Path(runtime_dir) / "tractus.sock"

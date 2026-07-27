@@ -70,12 +70,21 @@ pub fn parse_with_env(raw: &str, env_snapshot: &HashMap<String, String>) -> Pars
         Err(reason) => return ParseOutcome::Opaque(reason),
     };
 
-    if segments.is_empty() || segments.iter().any(|segment| segment.text.trim().is_empty()) {
+    if segments.is_empty()
+        || segments
+            .iter()
+            .any(|segment| segment.text.trim().is_empty())
+    {
         return ParseOutcome::Opaque("empty command segment".to_owned());
     }
 
-    if segments.iter().any(|segment| is_opaque_command(&segment.text)) {
-        return ParseOutcome::Opaque("eval, source, and dot commands require twin execution".to_owned());
+    if segments
+        .iter()
+        .any(|segment| is_opaque_command(&segment.text))
+    {
+        return ParseOutcome::Opaque(
+            "eval, source, and dot commands require twin execution".to_owned(),
+        );
     }
 
     let mut commands = Vec::with_capacity(segments.len());
@@ -88,7 +97,9 @@ pub fn parse_with_env(raw: &str, env_snapshot: &HashMap<String, String>) -> Pars
         let mut argv = match shell_words::split(&redirects.token_stream) {
             Ok(argv) if !argv.is_empty() => argv,
             Ok(_) => return ParseOutcome::Opaque("empty command segment".to_owned()),
-            Err(error) => return ParseOutcome::Opaque(format!("shell tokenization failed: {error}")),
+            Err(error) => {
+                return ParseOutcome::Opaque(format!("shell tokenization failed: {error}"))
+            }
         };
 
         if substitute_all(&mut argv, env_snapshot).is_err()
@@ -112,10 +123,7 @@ pub fn parse_with_env(raw: &str, env_snapshot: &HashMap<String, String>) -> Pars
     ParseOutcome::Commands(commands)
 }
 
-fn substitute_all(
-    tokens: &mut [String],
-    env_snapshot: &HashMap<String, String>,
-) -> Result<(), ()> {
+fn substitute_all(tokens: &mut [String], env_snapshot: &HashMap<String, String>) -> Result<(), ()> {
     for token in tokens {
         *token = substitute_variables(token, env_snapshot)?;
     }
@@ -132,10 +140,7 @@ fn substitute_paths(
     Ok(())
 }
 
-fn substitute_variables(
-    token: &str,
-    env_snapshot: &HashMap<String, String>,
-) -> Result<String, ()> {
+fn substitute_variables(token: &str, env_snapshot: &HashMap<String, String>) -> Result<String, ()> {
     let bytes = token.as_bytes();
     let mut result = String::with_capacity(token.len());
     let mut index = 0;
@@ -149,7 +154,8 @@ fn substitute_variables(
         }
 
         let (name, next_index) = if bytes.get(index + 1) == Some(&b'{') {
-            let Some(relative_end) = bytes[index + 2..].iter().position(|byte| *byte == b'}') else {
+            let Some(relative_end) = bytes[index + 2..].iter().position(|byte| *byte == b'}')
+            else {
                 result.push('$');
                 index += 1;
                 continue;
@@ -197,7 +203,9 @@ fn strip_environment_prefix(argv: &mut Vec<String>) -> HashMap<String, String> {
     let mut env = HashMap::with_capacity(prefix_length);
 
     for token in argv.drain(..prefix_length) {
-        let (key, value) = token.split_once('=').expect("validated environment assignment");
+        let (key, value) = token
+            .split_once('=')
+            .expect("validated environment assignment");
         env.insert(key.to_owned(), value.to_owned());
     }
     env
@@ -281,10 +289,9 @@ fn is_environment_assignment(token: &str) -> bool {
     };
 
     !name.is_empty()
-        && name
-            .bytes()
-            .enumerate()
-            .all(|(index, byte)| byte == b'_' || byte.is_ascii_alphabetic() || (index > 0 && byte.is_ascii_digit()))
+        && name.bytes().enumerate().all(|(index, byte)| {
+            byte == b'_' || byte.is_ascii_alphabetic() || (index > 0 && byte.is_ascii_digit())
+        })
 }
 
 #[derive(Debug)]
@@ -599,11 +606,8 @@ mod tests {
 
     #[test]
     fn parent_components_can_escape_workspace() {
-        let normalized = normalize_path(
-            "/workspace/repo/src",
-            "/workspace/repo",
-            "../../etc/passwd",
-        );
+        let normalized =
+            normalize_path("/workspace/repo/src", "/workspace/repo", "../../etc/passwd");
 
         assert_eq!(normalized.path, PathBuf::from("/workspace/etc/passwd"));
         assert!(normalized.escapes);
@@ -611,11 +615,7 @@ mod tests {
 
     #[test]
     fn lexical_normalization_keeps_internal_paths_inside_workspace() {
-        let normalized = normalize_path(
-            "/workspace/repo",
-            "/workspace/repo",
-            "./src/../tests/x",
-        );
+        let normalized = normalize_path("/workspace/repo", "/workspace/repo", "./src/../tests/x");
 
         assert_eq!(normalized.path, PathBuf::from("/workspace/repo/tests/x"));
         assert!(!normalized.escapes);

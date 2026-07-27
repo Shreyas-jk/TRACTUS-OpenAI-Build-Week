@@ -1,5 +1,7 @@
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::env;
+use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
@@ -11,6 +13,7 @@ mod socket_path;
 
 pub const HOLD_WAIT: Duration = Duration::from_secs(65);
 pub const REPORT_ACK_WAIT: Duration = Duration::from_secs(2);
+pub const CONTRACT_SETUP_WAIT: Duration = Duration::from_secs(2);
 const DEFAULT_HOLD_REASON: &str = "Tractus requires manual review.";
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -74,6 +77,9 @@ pub fn request_verdict_with_resolve_mode(
     if resolve_mode == ResolveMode::Client {
         proposal["resolve_mode"] = json!("client");
     }
+    if let Some(contract_id) = active_contract_id() {
+        proposal["contract_id"] = json!(contract_id);
+    }
     submit_proposal(id, proposal)
 }
 
@@ -114,7 +120,60 @@ pub fn request_edit_verdict_with_resolve_mode(
     if resolve_mode == ResolveMode::Client {
         proposal["resolve_mode"] = json!("client");
     }
+    if let Some(contract_id) = active_contract_id() {
+        proposal["contract_id"] = json!(contract_id);
+    }
     submit_proposal(id, proposal)
+}
+
+/// Install a named contract over an explicit socket and require a matching
+/// acknowledgment. The Tractus launcher uses this before it starts Codex; a
+/// malformed or legacy response is a failure rather than an implicit allow.
+pub fn set_contract_at(
+    socket_path: &Path,
+    workspace_root: &Path,
+    contract_id: &str,
+    contract: &Value,
+) -> Result<(), ()> {
+    if contract_id.trim().is_empty() {
+        return Err(());
+    }
+    let mut connection = UnixStream::connect(socket_path).map_err(|_| ())?;
+    connection
+        .set_read_timeout(Some(CONTRACT_SETUP_WAIT))
+        .map_err(|_| ())?;
+    connection
+        .set_write_timeout(Some(CONTRACT_SETUP_WAIT))
+        .map_err(|_| ())?;
+    write_json(
+        &mut connection,
+        &json!({
+            "type": "set_contract",
+            "contract_id": contract_id,
+            "workspace_root": workspace_root,
+            "contract": contract,
+        }),
+    )?;
+    let response = read_json_value(&mut connection, CONTRACT_SETUP_WAIT)?;
+    (response.get("type").and_then(Value::as_str) == Some("contract")
+        && response.get("action").and_then(Value::as_str) == Some("set")
+        && response.get("contract_id").and_then(Value::as_str) == Some(contract_id)
+        && response
+            .get("workspace_root")
+            .and_then(Value::as_str)
+            .is_some_and(|registered_root| {
+                same_workspace_root(workspace_root, Path::new(registered_root))
+            }))
+    .then_some(())
+    .ok_or(())
+}
+
+fn same_workspace_root(expected: &Path, actual: &Path) -> bool {
+    canonical_or_original(expected) == canonical_or_original(actual)
+}
+
+fn canonical_or_original(path: &Path) -> std::path::PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn submit_proposal(id: String, proposal: Value) -> Result<ShimVerdict, ()> {
@@ -140,15 +199,7 @@ fn submit_proposal(id: String, proposal: Value) -> Result<ShimVerdict, ()> {
 }
 
 pub fn read_response(connection: &mut UnixStream, timeout: Duration) -> Result<Response, ()> {
-    connection.set_read_timeout(Some(timeout)).map_err(|_| ())?;
-    let mut line = String::new();
-    BufReader::new(connection.try_clone().map_err(|_| ())?)
-        .read_line(&mut line)
-        .map_err(|_| ())?;
-    if line.is_empty() {
-        return Err(());
-    }
-    let value: Value = serde_json::from_str(&line).map_err(|_| ())?;
+    let value = read_json_value(connection, timeout)?;
     match value.get("action").and_then(Value::as_str) {
         Some("allow") => Ok(Response::Allow),
         Some("hold") => Ok(Response::Hold(
@@ -167,6 +218,18 @@ pub fn read_response(connection: &mut UnixStream, timeout: Duration) -> Result<R
     }
 }
 
+fn read_json_value(connection: &mut UnixStream, timeout: Duration) -> Result<Value, ()> {
+    connection.set_read_timeout(Some(timeout)).map_err(|_| ())?;
+    let mut line = String::new();
+    BufReader::new(connection.try_clone().map_err(|_| ())?)
+        .read_line(&mut line)
+        .map_err(|_| ())?;
+    if line.is_empty() {
+        return Err(());
+    }
+    serde_json::from_str(&line).map_err(|_| ())
+}
+
 pub fn write_json(connection: &mut UnixStream, value: &Value) -> Result<(), ()> {
     let encoded = serde_json::to_string(value).map_err(|_| ())?;
     connection.write_all(encoded.as_bytes()).map_err(|_| ())?;
@@ -180,4 +243,29 @@ fn command_id() -> String {
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
     format!("shim-{}-{timestamp}", process::id())
+}
+
+fn active_contract_id() -> Option<String> {
+    env::var("TRACTUS_CONTRACT_ID")
+        .ok()
+        .filter(|contract_id| !contract_id.trim().is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workspace_acknowledgment_accepts_only_the_same_workspace() {
+        let root = std::env::temp_dir().join(format!("tractus-shim-root-{}", process::id()));
+        fs::create_dir_all(&root).unwrap();
+
+        assert!(same_workspace_root(
+            &root,
+            &fs::canonicalize(&root).unwrap()
+        ));
+        assert!(!same_workspace_root(&root, Path::new("/another/workspace")));
+
+        let _ = fs::remove_dir_all(root);
+    }
 }

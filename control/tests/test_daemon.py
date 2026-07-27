@@ -5,7 +5,28 @@ from pathlib import Path
 
 import pytest
 
-from control.daemon import DaemonClient
+from control.daemon import DaemonClient, default_socket_path
+
+
+def test_default_socket_prefers_the_current_workspace_contract_store(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("TRACTUS_SOCK", raising=False)
+    monkeypatch.delenv("TRACTUS_WORKSPACE_ROOT", raising=False)
+    (tmp_path / ".tractus").mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    assert default_socket_path() == tmp_path / ".tractus" / "chaosd.sock"
+
+
+def test_default_socket_honors_an_explicit_workspace_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    workspace = tmp_path / "project"
+    monkeypatch.delenv("TRACTUS_SOCK", raising=False)
+    monkeypatch.setenv("TRACTUS_WORKSPACE_ROOT", str(workspace))
+
+    assert default_socket_path() == workspace / ".tractus" / "chaosd.sock"
 
 
 @pytest.mark.asyncio

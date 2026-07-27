@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use std::process;
 use tractus::store::{ContractDocument, ContractStore, StoreError};
 
+mod launcher;
+
 const ARTIFACT_PATHS: &[&str] = &[
     "target/**",
     "node_modules/**",
@@ -21,30 +23,47 @@ const DEFAULT_GIT_CHOICES: &[usize] = &[1, 2];
 fn main() {
     let mut input = io::stdin().lock();
     let mut output = io::stdout().lock();
-    if let Err(error) = run(env::args().skip(1), &mut input, &mut output) {
-        eprintln!("tractus: {error}");
-        process::exit(2);
+    match run(env::args().skip(1), &mut input, &mut output) {
+        Ok(0) => {}
+        Ok(exit_code) => process::exit(exit_code),
+        Err(error) => {
+            eprintln!("tractus: {error}");
+            process::exit(2);
+        }
     }
 }
 
-fn run<I, R, W>(arguments: I, input: &mut R, output: &mut W) -> Result<(), CliError>
+fn run<I, R, W>(arguments: I, input: &mut R, output: &mut W) -> Result<i32, CliError>
 where
     I: IntoIterator<Item = String>,
     R: BufRead,
     W: Write,
 {
     match parse_command(arguments)? {
-        Command::Help => write_usage(output),
+        Command::Help => {
+            write_usage(output)?;
+            Ok(0)
+        }
         Command::New { workspace_root } => {
             let _ = run_new(&workspace_root, input, output)?;
-            Ok(())
+            Ok(0)
         }
+        Command::Codex {
+            workspace_root,
+            codex_args,
+        } => launcher::launch_codex(&workspace_root, &codex_args).map_err(CliError::Launcher),
     }
 }
 
 #[derive(Debug, Eq, PartialEq)]
 enum Command {
-    New { workspace_root: PathBuf },
+    New {
+        workspace_root: PathBuf,
+    },
+    Codex {
+        workspace_root: PathBuf,
+        codex_args: Vec<String>,
+    },
     Help,
 }
 
@@ -59,33 +78,62 @@ where
     if matches!(command.as_str(), "--help" | "-h" | "help") {
         return Ok(Command::Help);
     }
-    if command != "new" {
-        return Err(CliError::Usage(format!("unknown command {command:?}")));
-    }
-
-    let mut workspace_root = env::current_dir()?;
-    while let Some(argument) = arguments.next() {
-        match argument.as_str() {
-            "--help" | "-h" => return Ok(Command::Help),
-            "--workspace" => {
-                let path = arguments.next().ok_or_else(|| {
-                    CliError::Usage("--workspace requires a path argument".to_owned())
-                })?;
-                workspace_root = PathBuf::from(path);
+    match command.as_str() {
+        "new" => {
+            let mut workspace_root = env::current_dir()?;
+            while let Some(argument) = arguments.next() {
+                match argument.as_str() {
+                    "--help" | "-h" => return Ok(Command::Help),
+                    "--workspace" => {
+                        let path = arguments.next().ok_or_else(|| {
+                            CliError::Usage("--workspace requires a path argument".to_owned())
+                        })?;
+                        workspace_root = PathBuf::from(path);
+                    }
+                    _ => return Err(CliError::Usage(format!("unknown argument {argument:?}"))),
+                }
             }
-            _ => return Err(CliError::Usage(format!("unknown argument {argument:?}"))),
+            Ok(Command::New { workspace_root })
         }
+        "codex" => {
+            let mut workspace_root = env::current_dir()?;
+            let mut codex_args = Vec::new();
+            let mut pass_through = false;
+            while let Some(argument) = arguments.next() {
+                if pass_through {
+                    codex_args.push(argument);
+                    continue;
+                }
+                match argument.as_str() {
+                    "--workspace" => {
+                        let path = arguments.next().ok_or_else(|| {
+                            CliError::Usage("--workspace requires a path argument".to_owned())
+                        })?;
+                        workspace_root = PathBuf::from(path);
+                    }
+                    "--" => pass_through = true,
+                    _ => codex_args.push(argument),
+                }
+            }
+            Ok(Command::Codex {
+                workspace_root,
+                codex_args,
+            })
+        }
+        _ => Err(CliError::Usage(format!("unknown command {command:?}"))),
     }
-
-    Ok(Command::New { workspace_root })
 }
 
 fn write_usage<W: Write>(output: &mut W) -> Result<(), CliError> {
     writeln!(output, "usage: tractus new [--workspace <path>]")?;
+    writeln!(
+        output,
+        "       tractus codex [--workspace <path>] [-- <codex args>]"
+    )?;
     writeln!(output, "")?;
     writeln!(
         output,
-        "Create and activate a durable Tractus Intent Contract."
+        "Create an Intent Contract or launch Codex with the active one enforced."
     )?;
     Ok(())
 }
@@ -517,6 +565,7 @@ enum CliError {
     InputClosed,
     Io(io::Error),
     Store(StoreError),
+    Launcher(launcher::LauncherError),
 }
 
 impl fmt::Display for CliError {
@@ -532,6 +581,7 @@ impl fmt::Display for CliError {
             ),
             Self::Io(error) => write!(formatter, "I/O error: {error}"),
             Self::Store(error) => write!(formatter, "contract store error: {error}"),
+            Self::Launcher(error) => write!(formatter, "launcher error: {error}"),
         }
     }
 }
@@ -541,6 +591,7 @@ impl Error for CliError {
         match self {
             Self::Io(error) => Some(error),
             Self::Store(error) => Some(error),
+            Self::Launcher(error) => Some(error),
             _ => None,
         }
     }
@@ -555,6 +606,12 @@ impl From<io::Error> for CliError {
 impl From<StoreError> for CliError {
     fn from(error: StoreError) -> Self {
         Self::Store(error)
+    }
+}
+
+impl From<launcher::LauncherError> for CliError {
+    fn from(error: launcher::LauncherError) -> Self {
+        Self::Launcher(error)
     }
 }
 
@@ -680,6 +737,25 @@ mod tests {
             .unwrap(),
             Command::New {
                 workspace_root: PathBuf::from("/tmp/project"),
+            }
+        );
+    }
+
+    #[test]
+    fn parser_passes_codex_arguments_and_keeps_its_workspace_local() {
+        assert_eq!(
+            parse_command([
+                "codex".to_owned(),
+                "--workspace".to_owned(),
+                "/tmp/project".to_owned(),
+                "--".to_owned(),
+                "--model".to_owned(),
+                "gpt-5.6-terra".to_owned(),
+            ])
+            .unwrap(),
+            Command::Codex {
+                workspace_root: PathBuf::from("/tmp/project"),
+                codex_args: vec!["--model".to_owned(), "gpt-5.6-terra".to_owned()],
             }
         );
     }

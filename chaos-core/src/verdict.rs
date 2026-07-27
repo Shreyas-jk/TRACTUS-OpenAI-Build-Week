@@ -336,7 +336,9 @@ mod tests {
     #[test]
     fn proof_rendering_includes_family_and_rm_flags() {
         let effects = classified_effects("rm -rf tmp");
-        let Verdict::ScopeViolation(proofs) = check(&effects, &example_contract(), &History::default()) else {
+        let Verdict::ScopeViolation(proofs) =
+            check(&effects, &example_contract(), &History::default())
+        else {
             panic!("rm must violate the example contract");
         };
 
@@ -395,8 +397,14 @@ mod tests {
             Path::new(ROOT),
         );
 
-        assert_eq!(effects.reads, [PathBuf::from("/workspace/repo/tests/input.txt")]);
-        assert_eq!(effects.writes, [PathBuf::from("/workspace/repo/tests/output.txt")]);
+        assert_eq!(
+            effects.reads,
+            [PathBuf::from("/workspace/repo/tests/input.txt")]
+        );
+        assert_eq!(
+            effects.writes,
+            [PathBuf::from("/workspace/repo/tests/output.txt")]
+        );
     }
 
     proptest! {

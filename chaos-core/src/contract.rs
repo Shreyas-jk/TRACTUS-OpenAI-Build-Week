@@ -161,9 +161,11 @@ impl ContractSpec {
             }
         }
 
-        let allowed_paths = allowed_paths.build().map_err(|error| ContractError::BuildGlobSet {
-            message: error.to_string(),
-        })?;
+        let allowed_paths = allowed_paths
+            .build()
+            .map_err(|error| ContractError::BuildGlobSet {
+                message: error.to_string(),
+            })?;
 
         Ok(Contract {
             task: self.task,
@@ -187,9 +189,14 @@ impl fmt::Display for ContractError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidGlob { pattern, message } => {
-                write!(formatter, "invalid allowed-path glob {pattern:?}: {message}")
+                write!(
+                    formatter,
+                    "invalid allowed-path glob {pattern:?}: {message}"
+                )
             }
-            Self::BuildGlobSet { message } => write!(formatter, "failed to build glob set: {message}"),
+            Self::BuildGlobSet { message } => {
+                write!(formatter, "failed to build glob set: {message}")
+            }
         }
     }
 }
@@ -261,9 +268,7 @@ mod tests {
         artifact_spec.allowed_paths = vec!["target/**".to_owned()];
         let contract = artifact_spec.compile("/workspace/project").unwrap();
 
-        assert!(contract
-            .allowed_paths
-            .is_match("/workspace/project/target"));
+        assert!(contract.allowed_paths.is_match("/workspace/project/target"));
     }
 
     #[test]
