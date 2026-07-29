@@ -276,25 +276,56 @@ pub fn normalize_contract(contract: ContractSpec, request: &str) -> ContractSpec
     }
 }
 
-/// Canonicalize directory grants to one recursive glob before deduplicating.
+/// Canonicalize each path grant to one glob before deduplicating.
 fn deduplicated(values: &[String]) -> Vec<String> {
     let mut normalized = Vec::new();
     for value in values {
-        let trimmed = value.trim().trim_start_matches('/').trim_end_matches('/');
-        if trimmed.is_empty() {
+        let Some(path) = normalize_path_glob(value) else {
             continue;
-        }
-        let has_glob = trimmed.contains(['*', '?', '[']);
-        let path = if !trimmed.ends_with("/**") && (!has_glob || trimmed.starts_with("**/")) {
-            format!("{trimmed}/**")
-        } else {
-            trimmed.to_owned()
         };
         if !normalized.contains(&path) {
             normalized.push(path);
         }
     }
     normalized
+}
+
+/// Turn a raw path grant into a glob. Directories become recursive (`dir/**`),
+/// but a file grant stays literal so the file itself matches — appending `/**`
+/// to a file would only match a phantom subtree and silently block editing it.
+fn normalize_path_glob(raw: &str) -> Option<String> {
+    let input = raw.trim();
+    let had_trailing_slash = input.ends_with('/');
+    let path = input.trim_start_matches('/').trim_end_matches('/');
+    if path.is_empty() {
+        return None;
+    }
+    if path.ends_with("/**") {
+        return Some(path.to_owned());
+    }
+    if path.contains(['*', '?', '[']) {
+        // Existing glob: only make an anchored `**/…` prefix recursive.
+        return Some(if path.starts_with("**/") {
+            format!("{path}/**")
+        } else {
+            path.to_owned()
+        });
+    }
+    if had_trailing_slash || !looks_like_file(path) {
+        Some(format!("{path}/**"))
+    } else {
+        Some(path.to_owned())
+    }
+}
+
+/// A trailing path segment is treated as a file when it carries an interior
+/// extension dot (`api_test.rs`), but not a leading-dot directory (`.venv`).
+fn looks_like_file(path: &str) -> bool {
+    let last = path.rsplit('/').next().unwrap_or(path);
+    match last.rfind('.') {
+        Some(index) => index > 0 && index < last.len() - 1,
+        None => false,
+    }
 }
 
 fn regex_for(pattern: &str) -> &'static Regex {
@@ -438,6 +469,27 @@ mod tests {
         assert!(explicit.allowed_ops.contains(&Operation::Run));
         assert!(explicit.network);
         assert!(explicit.deps_may_change);
+    }
+
+    #[test]
+    fn file_targets_stay_literal_while_directories_recurse() {
+        // A file grant must match the file itself, not a phantom `file/**` subtree.
+        assert_eq!(
+            normalize_path_glob("tests/api_test.rs").as_deref(),
+            Some("tests/api_test.rs")
+        );
+        assert_eq!(normalize_path_glob("src").as_deref(), Some("src/**"));
+        assert_eq!(normalize_path_glob("src/").as_deref(), Some("src/**"));
+        assert_eq!(normalize_path_glob(".venv").as_deref(), Some(".venv/**"));
+        assert_eq!(normalize_path_glob("src/*.rs").as_deref(), Some("src/*.rs"));
+        assert_eq!(
+            normalize_path_glob("target/**").as_deref(),
+            Some("target/**")
+        );
+        assert_eq!(
+            normalize_path_glob("**/__pycache__").as_deref(),
+            Some("**/__pycache__/**")
+        );
     }
 
     #[test]

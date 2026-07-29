@@ -517,8 +517,22 @@ fn normalize_path(raw: &str) -> Result<String, String> {
             .any(|character| matches!(character, '*' | '?' | '['))
     {
         Ok(path.to_owned())
-    } else {
+    } else if raw.ends_with('/') || !looks_like_file(path) {
+        // Directories become recursive; a file grant stays literal so appending
+        // `/**` cannot silently block editing the file itself.
         Ok(format!("{path}/**"))
+    } else {
+        Ok(path.to_owned())
+    }
+}
+
+/// A trailing path segment is a file when it carries an interior extension dot
+/// (`api_test.rs`), but not a leading-dot directory (`.venv`).
+fn looks_like_file(path: &str) -> bool {
+    let last = path.rsplit('/').next().unwrap_or(path);
+    match last.rfind('.') {
+        Some(index) => index > 0 && index < last.len() - 1,
+        None => false,
     }
 }
 
@@ -867,6 +881,19 @@ mod tests {
         );
         assert!(normalize_paths("/etc").is_err());
         assert!(normalize_paths("src/../secrets").is_err());
+    }
+
+    #[test]
+    fn file_targets_stay_literal_while_directories_recurse() {
+        assert_eq!(
+            normalize_path("tests/api_test.rs").unwrap(),
+            "tests/api_test.rs"
+        );
+        assert_eq!(normalize_path("Cargo.toml").unwrap(), "Cargo.toml");
+        assert_eq!(normalize_path("src").unwrap(), "src/**");
+        assert_eq!(normalize_path("src/").unwrap(), "src/**");
+        assert_eq!(normalize_path(".venv").unwrap(), ".venv/**");
+        assert_eq!(normalize_path("src/*.rs").unwrap(), "src/*.rs");
     }
 
     #[test]
