@@ -1,8 +1,8 @@
 # Tractus — Design Doc
 
-**Track:** Developer Tools (OpenAI Build Week, submission due Tue Jul 21, 5:00 PM PT)
+**Track:** Developer Tools — OpenAI Build Week 2026 (origin).
 **Author:** Shreyas J Kiran
-**Status:** v2 (Jul 13, 2026) — rescoped per council review. v1 world model and AST parser cut.
+**Status:** v2 design — rescoped from v1 (PyTorch world model and hand-rolled AST parser cut). Sections 1–8 describe the shipped system; the original Build Week execution plan is retained below as a historical appendix.
 
 ## 1. One-liner
 
@@ -146,7 +146,13 @@ When a twin diff or classifier verdict is a violation, GPT-5.6 gets (contract, c
 
 In the product: Sol for intent-contract extraction (structured outputs, accuracy matters), Luna or Terra for divergence explanations (cheap, low stakes).
 
-In the build: Sol for architecture decisions and the contract-checker design; Terra for boilerplate, FastAPI, Dockerfiles, UI, and all debugging; cache pinning of system prompts and core files; 3 to 5 iteration cap on autonomous fix loops (also the product's own feature). $100 credits ample; front $5 to 10 personal if credits lag (escalation already sent to build-week-event@openai.com).
+In the build: Sol for architecture decisions and the contract-checker design; Terra for implementation, Dockerfiles, and debugging; cache pinning of system prompts and core files; iteration cap on autonomous fix loops (also the product's own feature). The control plane was originally a Python/FastAPI service; it has since been ported to the Rust `tractus-console` binary so the whole product is one toolchain.
+
+---
+
+# Appendix — Build Week execution plan (historical)
+
+The sections below are the original Jul 13–21, 2026 execution plan, kept for the record. They describe how the project was built and demoed during OpenAI Build Week, not the current state of the system.
 
 ## 9. Milestones (Jul 13 → Jul 21)
 

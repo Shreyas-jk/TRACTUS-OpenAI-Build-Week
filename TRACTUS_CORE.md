@@ -1,6 +1,6 @@
 # tractus-core — Rust Architecture
 
-**Status:** Draft v1 (Jul 13, 2026). Companion to DESIGN.md Sections 4.1 and 4.2.
+**Status:** Companion to DESIGN.md Sections 4.1 and 4.2. Describes the shipped engine.
 
 ## 1. Process model
 
@@ -18,7 +18,7 @@ tractus/
 ```
 
 - **`tractus-shim`** mimics the `sh -c` interface so any agent that shells out can use it: Codex CLI is configured with `SHELL=tractus-shim` (or its shell hook), and each proposed command arrives as `tractus-shim -c "<command>"`. The shim sends the command to `tractusd` over a Unix domain socket, waits for the verdict, then either `exec`s the real `/bin/sh -c <command>` (preserving cwd, env, tty, and exit code) or prints the synthetic handoff output and exits 1. The shim contains zero decision logic.
-- **`tractusd`** is the single long-lived daemon: loads the active contract, runs the verdict pipeline from `tractus-core`, owns the Docker twin pool, holds `NEEDS_HUMAN` commands pending user decisions, and broadcasts events. Socket at `$XDG_RUNTIME_DIR/tractus.sock`, JSON-lines protocol.
+- **`tractusd`** is the single long-lived daemon: loads the active contract, runs the verdict pipeline from `tractus-core`, owns the Docker twin pool, holds `NEEDS_HUMAN` commands pending user decisions, and broadcasts events. The socket is workspace-local (`<workspace>/.tractus/tractusd.sock`) when launched via `tractus codex`, with an `$XDG_RUNTIME_DIR`/`/tmp` fallback for other clients; JSON-lines protocol.
 - **`tractus-console` (axum)** connects to the same socket: subscribes to the event stream for the UI WebSocket, sends `set_contract` after intent extraction, and sends `resolve` when the user clicks approve/reject. All GPT-5.6 calls live in this separate binary, never in `tractusd`, preserving the "no LLM in the enforcement path" invariant at the process boundary.
 
 ## 2. Core data types (`tractus-core`)
@@ -221,7 +221,7 @@ The `hold` path implements DESIGN.md 4.1: shim blocks up to 60 s for a `resolve`
 
 `serde`, `serde_json`, `shell-words`, `globset`, `blake3`, `tokio` (tractusd/shim only), `tracing`, `ron`; dev: `insta`, `proptest`. `tractus-core` itself is sync and dependency-light so the whole verdict path unit-tests without a runtime.
 
-## 11. Build order (maps to DESIGN.md Section 9)
+## 11. Build order (historical — maps to DESIGN.md Section 9)
 
 - **Mon 13:** workspace scaffold, data types, Stage 0 to 3 of the parser, corpus schema.
 - **Tue 14:** classifier + verdict + proof traces, loop detector, snapshot/property tests green.

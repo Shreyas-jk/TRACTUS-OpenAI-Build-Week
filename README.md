@@ -61,5 +61,25 @@ Then open <http://127.0.0.1:8787>. The console auto-loads `.env` from the workin
 
 > **Fail-closed holds:** current Codex `PreToolUse` hooks do not support `permissionDecision: "ask"`; Codex reports it as a failed hook and continues the tool call. Tractus therefore denies unresolved or unavailable requests and requires an explicit contract amendment before retrying.
 
-> Stub. Setup instructions, sample data, demo video link, and the "how GPT-5.6 and Codex were
-> used" section land before submission (Mon Jul 20), generated in the Codex session.
+## How GPT-5.6 is used
+
+The design is a deliberate **neurosymbolic split**: the model turns fuzzy human intent into structure once; a deterministic Rust engine enforces that structure forever.
+
+- **Intent extraction** (`gpt-5.6-sol`, structured outputs) turns your natural-language request into the Intent Contract you confirm.
+- **Divergence explainer** (`gpt-5.6-luna`) writes the one-sentence, advisory "why this was blocked" note on the dashboard. It is advisory only — it can never turn a block into an allow.
+- **The enforcement path has zero LLM calls.** Every allow/block/hold verdict is computed by `tractus-core` from the confirmed contract, so it is deterministic and reproducible.
+
+Both model calls live in `tractus-console`, never in the enforcement daemon. Tractus began as an OpenAI Build Week 2026 project (Developer Tools track) built in the Codex CLI with GPT-5.6.
+
+## Repository layout
+
+| Crate | Role |
+|---|---|
+| `tractus-core` | Pure, IO-free engine: contract, parse, classify, verdict, history |
+| `tractusd` | Long-lived daemon: enforcement state, Docker twin pool, event bus |
+| `tractus-shim` | `sh -c` interceptor for any agent that shells out |
+| `tractus-hook` | Native Codex `PreToolUse` plugin |
+| `tractus` | Contract wizard + fail-closed Codex launcher (`init`, `new`, `codex`) |
+| `tractus-console` | axum dashboard + GPT-5.6 intent extraction + event bridge |
+
+See [DESIGN.md](DESIGN.md) for the full design and [TRACTUS_CORE.md](TRACTUS_CORE.md) for the engine internals.
