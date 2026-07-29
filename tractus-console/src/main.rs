@@ -41,16 +41,56 @@ async fn run() -> Result<(), Box<dyn Error>> {
         }
     }
 
+    // Pick up OPENAI_API_KEY (and model overrides) from a local .env so the
+    // operator never has to export them by hand. Real environment wins.
+    let loaded = load_dotenv();
+
     let socket_path = socket_override.unwrap_or_else(default_socket_path);
     let state = AppState::new(DaemonClient::new(socket_path.clone()));
     let addr: SocketAddr = addr.parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    println!(
-        "tractus-console on http://{addr}  ·  daemon socket {}",
-        socket_path.display()
-    );
+
+    println!("tractus-console on http://{addr}");
+    println!("  daemon socket: {}", socket_path.display());
+    if !loaded.is_empty() {
+        println!("  loaded from .env: {}", loaded.join(", "));
+    }
+    if std::env::var("OPENAI_API_KEY").is_ok_and(|key| !key.is_empty()) {
+        println!("  intent extraction: enabled (OPENAI_API_KEY set)");
+    } else {
+        println!("  intent extraction: disabled — set OPENAI_API_KEY or add it to .env");
+    }
+
     axum::serve(listener, app(state)).await?;
     Ok(())
+}
+
+/// Load `KEY=VALUE` pairs from `./.env` into the environment without overriding
+/// anything already set. Returns the names loaded (never the values). No-ops if
+/// there is no `.env`. Supports `#` comments, optional `export ` prefixes, and
+/// single/double-quoted values.
+fn load_dotenv() -> Vec<String> {
+    let Ok(contents) = std::fs::read_to_string(".env") else {
+        return Vec::new();
+    };
+    let mut loaded = Vec::new();
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim().strip_prefix("export ").unwrap_or(key).trim();
+        if key.is_empty() || std::env::var_os(key).is_some() {
+            continue;
+        }
+        let value = value.trim().trim_matches('"').trim_matches('\'');
+        std::env::set_var(key, value);
+        loaded.push(key.to_owned());
+    }
+    loaded
 }
 
 fn print_usage() {
