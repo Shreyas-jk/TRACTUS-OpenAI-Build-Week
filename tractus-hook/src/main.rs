@@ -48,6 +48,15 @@ fn run() -> Value {
     let mut input = Vec::new();
     let read_result = io::stdin().read_to_end(&mut input);
     capture_raw_input(&input);
+
+    // The hook is installed globally, so it also fires for Codex sessions that
+    // Tractus never launched. The launcher exports TRACTUS_WORKSPACE_ROOT for
+    // managed sessions; without it, this is an ordinary Codex session and the
+    // tool must pass through untouched — never fail closed on unrelated work.
+    if !is_tractus_session() {
+        return continue_response();
+    }
+
     if read_result.is_err() {
         return unavailable_response();
     }
@@ -96,6 +105,17 @@ fn run() -> Value {
         }
         _ => continue_response(),
     }
+}
+
+/// True when this Codex session was launched by `tractus`, identified by the
+/// workspace root the launcher exports. A missing marker means an ordinary
+/// session the globally-installed hook must leave untouched.
+fn is_tractus_session() -> bool {
+    marker_present(env::var_os("TRACTUS_WORKSPACE_ROOT"))
+}
+
+fn marker_present(marker: Option<std::ffi::OsString>) -> bool {
+    marker.is_some_and(|value| !value.is_empty())
 }
 
 fn payload_cwd(payload: &PreToolUsePayload) -> &Path {
@@ -311,6 +331,15 @@ mod tests {
         assert!(payload.session_id.is_none());
         assert!(payload.cwd.is_none());
         assert!(payload.tool_input.is_null());
+    }
+
+    #[test]
+    fn session_marker_gates_enforcement() {
+        assert!(!marker_present(None));
+        assert!(!marker_present(Some(std::ffi::OsString::from(""))));
+        assert!(marker_present(Some(std::ffi::OsString::from(
+            "contract-123"
+        ))));
     }
 
     #[test]

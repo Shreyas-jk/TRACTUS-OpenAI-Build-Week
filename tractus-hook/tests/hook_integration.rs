@@ -94,6 +94,8 @@ async fn invoke(socket: &Path, cwd: &Path, payload: Value) -> Output {
     invoke_with_contract(socket, cwd, payload, None).await
 }
 
+/// Models a `tractus`-launched (managed) session: the launcher exports
+/// TRACTUS_WORKSPACE_ROOT, which the session gate uses to enable enforcement.
 async fn invoke_with_contract(
     socket: &Path,
     cwd: &Path,
@@ -107,8 +109,9 @@ async fn invoke_with_contract(
     tokio::task::spawn_blocking(move || {
         let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_tractus-hook"));
         command
-            .current_dir(cwd)
+            .current_dir(&cwd)
             .env("TRACTUS_SOCK", socket)
+            .env("TRACTUS_WORKSPACE_ROOT", &cwd)
             .env_remove("TRACTUS_CONTRACT_ID")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped());
@@ -116,6 +119,29 @@ async fn invoke_with_contract(
             command.env("TRACTUS_CONTRACT_ID", contract_id);
         }
         let mut child = command.spawn().unwrap();
+        child.stdin.as_mut().unwrap().write_all(&input).unwrap();
+        child.wait_with_output().unwrap()
+    })
+    .await
+    .unwrap()
+}
+
+/// Models an ordinary Codex session Tractus never launched: no managed-session
+/// markers, so the global hook must pass the tool through.
+async fn invoke_unmanaged(socket: &Path, cwd: &Path, payload: Value) -> Output {
+    let socket = socket.to_path_buf();
+    let cwd = cwd.to_path_buf();
+    let input = serde_json::to_vec(&payload).unwrap();
+    tokio::task::spawn_blocking(move || {
+        let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_tractus-hook"))
+            .current_dir(cwd)
+            .env("TRACTUS_SOCK", socket)
+            .env_remove("TRACTUS_WORKSPACE_ROOT")
+            .env_remove("TRACTUS_CONTRACT_ID")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
         child.stdin.as_mut().unwrap().write_all(&input).unwrap();
         child.wait_with_output().unwrap()
     })
@@ -165,6 +191,24 @@ fn test_root(label: &str) -> std::path::PathBuf {
     ));
     std::fs::create_dir_all(&root).unwrap();
     root
+}
+
+#[tokio::test]
+async fn unmanaged_session_without_contract_id_passes_through() {
+    // No TRACTUS_CONTRACT_ID and no daemon: an ordinary Codex session the
+    // globally-installed hook must not touch, even for a would-be violation.
+    let root = test_root("unmanaged");
+    let response = parse_output(
+        invoke_unmanaged(
+            &root.join("missing.sock"),
+            &root,
+            payload(&root, "Bash", "cargo add axios"),
+        )
+        .await,
+    );
+
+    assert_eq!(response, json!({"continue": true}));
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[tokio::test]

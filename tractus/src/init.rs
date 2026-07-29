@@ -1,12 +1,15 @@
 //! `tractus init` — one-time, idempotent setup.
 //!
-//! Two steps are currently manual and easy to get wrong: generating the
-//! machine-local `.codex/hooks.json` and enabling the experimental hook feature
-//! flag in `~/.codex/config.toml`. `init` performs both, verifies the sibling
-//! binaries exist, and prints exactly what it changed. Every step is safe to run
-//! repeatedly: unchanged files are left untouched and the global config is backed
-//! up before any edit.
+//! Two steps are otherwise manual and easy to get wrong: registering the Codex
+//! hook and enabling the experimental hook feature flag. `init` installs the
+//! hook **globally** in `~/.codex/hooks.json` (merging into any existing hooks)
+//! so it protects every project you launch through `tractus`, enables the flag
+//! in `~/.codex/config.toml`, verifies the sibling binaries, and prints exactly
+//! what it changed. Safe to re-run: unchanged files are left untouched and any
+//! file it edits is backed up first. The hook itself no-ops for Codex sessions
+//! Tractus did not launch, so a global install never disturbs ordinary work.
 
+use serde_json::{json, Map, Value};
 use std::env;
 use std::error::Error;
 use std::fmt;
@@ -18,40 +21,48 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use toml_edit::{value, DocumentMut, Item, Table};
 
 const WRAPPER_RELATIVE: &str = ".codex/run-tractus-hook.sh";
-const HOOKS_RELATIVE: &str = ".codex/hooks.json";
+const WRAPPER_NAME: &str = "run-tractus-hook.sh";
 const REQUIRED_BINARIES: &[&str] = &["tractusd", "tractus-hook"];
 
-/// Resolve the repository and global config paths, then run setup.
+/// Resolve the repository and Codex home, then run setup.
 pub fn run_init<W: Write>(output: &mut W) -> Result<(), InitError> {
     let repo_root = locate_repo_root()?;
-    let config_path = codex_config_path()?;
-    init_with_paths(&repo_root, &config_path, output)
+    let codex_home = codex_home()?;
+    init_with_paths(&repo_root, &codex_home, output)
 }
 
 fn init_with_paths<W: Write>(
     repo_root: &Path,
-    config_path: &Path,
+    codex_home: &Path,
     output: &mut W,
 ) -> Result<(), InitError> {
     writeln!(output, "TRACTUS ▸ init")?;
     writeln!(output, "Repository: {}", repo_root.display())?;
+    writeln!(output, "Codex home: {}", codex_home.display())?;
     writeln!(output)?;
 
-    let hook = install_hook(repo_root)?;
-    match hook.changed {
-        true => writeln!(
+    let wrapper = repo_root.join(WRAPPER_RELATIVE);
+    let hook = install_hook(codex_home, &wrapper)?;
+    match (&hook.backup, hook.changed) {
+        (Some(backup), _) => writeln!(
             output,
-            "✓ Codex hook installed: {}",
+            "✓ Codex hook installed globally: {} (backup at {})",
+            hook.hooks_file.display(),
+            backup.display()
+        )?,
+        (None, true) => writeln!(
+            output,
+            "✓ Codex hook installed globally: {}",
             hook.hooks_file.display()
         )?,
-        false => writeln!(
+        (None, false) => writeln!(
             output,
             "✓ Codex hook already installed: {}",
             hook.hooks_file.display()
         )?,
     }
 
-    let flag = enable_hook_feature(config_path)?;
+    let flag = enable_hook_feature(&codex_home.join("config.toml"))?;
     match &flag {
         FlagOutcome::AlreadyEnabled { path } => {
             writeln!(output, "✓ Hook feature already enabled: {}", path.display())?
@@ -123,46 +134,115 @@ fn locate_repo_root() -> Result<PathBuf, InitError> {
 struct HookOutcome {
     hooks_file: PathBuf,
     changed: bool,
+    backup: Option<PathBuf>,
 }
 
-fn install_hook(repo_root: &Path) -> Result<HookOutcome, InitError> {
-    let wrapper = repo_root.join(WRAPPER_RELATIVE);
-    let hooks_file = repo_root.join(HOOKS_RELATIVE);
+/// Install the Tractus hook into `<codex_home>/hooks.json`, merging into any
+/// existing hooks. An existing file is backed up before it is rewritten, and an
+/// unparseable one is preserved (backed up) rather than silently discarded.
+fn install_hook(codex_home: &Path, wrapper: &Path) -> Result<HookOutcome, InitError> {
     if !wrapper.is_file() {
-        return Err(InitError::WrapperMissing { path: wrapper });
+        return Err(InitError::WrapperMissing {
+            path: wrapper.to_path_buf(),
+        });
     }
-    ensure_executable(&wrapper)?;
+    ensure_executable(wrapper)?;
+    fs::create_dir_all(codex_home).map_err(|source| InitError::Io {
+        path: codex_home.to_path_buf(),
+        source,
+    })?;
 
-    let desired = hooks_json(&wrapper);
-    let changed = match fs::read_to_string(&hooks_file) {
-        Ok(existing) if existing == desired => false,
-        _ => {
-            write_file(&hooks_file, &desired)?;
-            true
-        }
+    let hooks_file = codex_home.join("hooks.json");
+    let wrapper_command = wrapper.to_string_lossy().into_owned();
+
+    let existed = hooks_file.exists();
+    let mut document = if existed {
+        let text = fs::read_to_string(&hooks_file).map_err(|source| InitError::Io {
+            path: hooks_file.clone(),
+            source,
+        })?;
+        // A file we cannot parse is preserved via the backup below, not merged.
+        serde_json::from_str::<Value>(&text).unwrap_or(Value::Null)
+    } else {
+        Value::Null
     };
+
+    let original = document.clone();
+    ensure_tractus_hook(&mut document, &wrapper_command);
+    let changed = document != original;
+
+    let mut backup = None;
+    if changed {
+        if existed {
+            let path = backup_path(&hooks_file);
+            fs::copy(&hooks_file, &path).map_err(|source| InitError::Io {
+                path: path.clone(),
+                source,
+            })?;
+            backup = Some(path);
+        }
+        write_file(&hooks_file, &to_pretty(&document))?;
+    }
     Ok(HookOutcome {
         hooks_file,
         changed,
+        backup,
     })
 }
 
-fn hooks_json(wrapper: &Path) -> String {
-    let document = serde_json::json!({
-        "_comment": "generated by `tractus init` — do not edit",
-        "hooks": {
-            "PreToolUse": [
-                {
-                    "matcher": "Bash|apply_patch",
-                    "hooks": [
-                        { "type": "command", "command": wrapper.to_string_lossy() }
-                    ]
-                }
-            ]
-        }
-    });
+/// Ensure exactly one Tractus `PreToolUse` entry exists, pointing at `wrapper`,
+/// without disturbing any other hooks the user has configured.
+fn ensure_tractus_hook(document: &mut Value, wrapper: &str) {
+    let root = ensure_object(document);
+    let hooks = ensure_object(root.entry("hooks").or_insert_with(|| json!({})));
+    let pre_tool_use = ensure_array(hooks.entry("PreToolUse").or_insert_with(|| json!([])));
+    let desired = tractus_entry(wrapper);
+    match pre_tool_use
+        .iter_mut()
+        .find(|entry| entry_is_tractus(entry))
+    {
+        Some(existing) => *existing = desired,
+        None => pre_tool_use.push(desired),
+    }
+}
+
+fn entry_is_tractus(entry: &Value) -> bool {
+    entry
+        .get("hooks")
+        .and_then(Value::as_array)
+        .is_some_and(|hooks| {
+            hooks.iter().any(|hook| {
+                hook.get("command")
+                    .and_then(Value::as_str)
+                    .is_some_and(|command| command.ends_with(WRAPPER_NAME))
+            })
+        })
+}
+
+fn tractus_entry(wrapper: &str) -> Value {
+    json!({
+        "matcher": "Bash|apply_patch",
+        "hooks": [ { "type": "command", "command": wrapper } ],
+    })
+}
+
+fn ensure_object(value: &mut Value) -> &mut Map<String, Value> {
+    if !value.is_object() {
+        *value = Value::Object(Map::new());
+    }
+    value.as_object_mut().expect("coerced to object")
+}
+
+fn ensure_array(value: &mut Value) -> &mut Vec<Value> {
+    if !value.is_array() {
+        *value = Value::Array(Vec::new());
+    }
+    value.as_array_mut().expect("coerced to array")
+}
+
+fn to_pretty(document: &Value) -> String {
     let mut rendered =
-        serde_json::to_string_pretty(&document).expect("a fixed JSON structure always serializes");
+        serde_json::to_string_pretty(document).expect("a JSON value always serializes");
     rendered.push('\n');
     rendered
 }
@@ -298,14 +378,14 @@ fn check_binaries(repo_root: &Path) -> Vec<BinaryStatus> {
         .collect()
 }
 
-fn codex_config_path() -> Result<PathBuf, InitError> {
+fn codex_home() -> Result<PathBuf, InitError> {
     if let Some(dir) = env::var_os("CODEX_HOME").filter(|value| !value.is_empty()) {
-        return Ok(PathBuf::from(dir).join("config.toml"));
+        return Ok(PathBuf::from(dir));
     }
     let home = env::var_os("HOME")
         .filter(|value| !value.is_empty())
         .ok_or(InitError::HomeNotFound)?;
-    Ok(PathBuf::from(home).join(".codex").join("config.toml"))
+    Ok(PathBuf::from(home).join(".codex"))
 }
 
 fn write_file(path: &Path, contents: &str) -> Result<(), InitError> {
@@ -346,7 +426,7 @@ impl fmt::Display for InitError {
             ),
             Self::HomeNotFound => write!(
                 formatter,
-                "neither CODEX_HOME nor HOME is set; cannot locate ~/.codex/config.toml"
+                "neither CODEX_HOME nor HOME is set; cannot locate ~/.codex"
             ),
             Self::WrapperMissing { path } => write!(
                 formatter,
@@ -414,15 +494,23 @@ mod tests {
         }
     }
 
+    fn count_backups(dir: &Path) -> usize {
+        fs::read_dir(dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains("tractus-bak"))
+            .count()
+    }
+
     #[test]
-    fn installs_hook_and_creates_config_when_absent() {
+    fn installs_hook_globally_and_creates_config_when_absent() {
         let repo = TestRepo::new();
-        let config = repo.root.join("codex-home").join("config.toml");
+        let home = repo.root.join("codex-home");
         let mut output = Vec::new();
 
-        init_with_paths(&repo.root, &config, &mut output).unwrap();
+        init_with_paths(&repo.root, &home, &mut output).unwrap();
 
-        let hooks = fs::read_to_string(repo.root.join(HOOKS_RELATIVE)).unwrap();
+        let hooks = fs::read_to_string(home.join("hooks.json")).unwrap();
         assert!(hooks.contains(
             &repo
                 .root
@@ -432,7 +520,7 @@ mod tests {
         ));
         assert!(hooks.contains("Bash|apply_patch"));
         assert_eq!(
-            fs::read_to_string(&config).unwrap(),
+            fs::read_to_string(home.join("config.toml")).unwrap(),
             "[features]\nhooks = true\n"
         );
         // The wrapper must end up executable for Codex to run it.
@@ -446,69 +534,100 @@ mod tests {
     #[test]
     fn is_idempotent_on_second_run() {
         let repo = TestRepo::new();
-        let config = repo.root.join("config.toml");
+        let home = repo.root.join("codex-home");
         let mut first = Vec::new();
-        init_with_paths(&repo.root, &config, &mut first).unwrap();
+        init_with_paths(&repo.root, &home, &mut first).unwrap();
 
-        let hooks_before = fs::read_to_string(repo.root.join(HOOKS_RELATIVE)).unwrap();
-        let config_before = fs::read_to_string(&config).unwrap();
+        let hooks_before = fs::read_to_string(home.join("hooks.json")).unwrap();
+        let config_before = fs::read_to_string(home.join("config.toml")).unwrap();
 
         let mut second = Vec::new();
-        init_with_paths(&repo.root, &config, &mut second).unwrap();
+        init_with_paths(&repo.root, &home, &mut second).unwrap();
 
         assert_eq!(
-            fs::read_to_string(repo.root.join(HOOKS_RELATIVE)).unwrap(),
+            fs::read_to_string(home.join("hooks.json")).unwrap(),
             hooks_before
         );
-        assert_eq!(fs::read_to_string(&config).unwrap(), config_before);
-        assert!(String::from_utf8(second)
+        assert_eq!(
+            fs::read_to_string(home.join("config.toml")).unwrap(),
+            config_before
+        );
+        assert!(String::from_utf8(second).unwrap().contains("already"));
+        assert_eq!(count_backups(&home), 0);
+    }
+
+    #[test]
+    fn merges_into_existing_hooks_and_preserves_other_entries() {
+        let repo = TestRepo::new();
+        let home = repo.root.join("codex-home");
+        fs::create_dir_all(&home).unwrap();
+        fs::write(
+            home.join("hooks.json"),
+            r#"{"hooks":{"PreToolUse":[{"matcher":"Read","hooks":[{"type":"command","command":"/usr/local/bin/other-hook"}]}]}}"#,
+        )
+        .unwrap();
+
+        init_with_paths(&repo.root, &home, &mut Vec::new()).unwrap();
+
+        let hooks: Value =
+            serde_json::from_str(&fs::read_to_string(home.join("hooks.json")).unwrap()).unwrap();
+        let entries = hooks["hooks"]["PreToolUse"].as_array().unwrap();
+        assert!(entries
+            .iter()
+            .any(|entry| entry["hooks"][0]["command"] == "/usr/local/bin/other-hook"));
+        assert!(entries.iter().any(|entry| entry["hooks"][0]["command"]
+            .as_str()
+            .is_some_and(|command| command.ends_with(WRAPPER_NAME))));
+        assert_eq!(count_backups(&home), 1);
+
+        // A second run neither duplicates the entry nor writes another backup.
+        init_with_paths(&repo.root, &home, &mut Vec::new()).unwrap();
+        let hooks: Value =
+            serde_json::from_str(&fs::read_to_string(home.join("hooks.json")).unwrap()).unwrap();
+        let tractus_entries = hooks["hooks"]["PreToolUse"]
+            .as_array()
             .unwrap()
-            .contains("already enabled"));
-        // No backup files created when nothing changed.
-        let backups = fs::read_dir(config.parent().unwrap())
-            .unwrap()
-            .filter_map(Result::ok)
-            .filter(|entry| entry.file_name().to_string_lossy().contains("tractus-bak"))
+            .iter()
+            .filter(|entry| {
+                entry["hooks"][0]["command"]
+                    .as_str()
+                    .is_some_and(|command| command.ends_with(WRAPPER_NAME))
+            })
             .count();
-        assert_eq!(backups, 0);
+        assert_eq!(tractus_entries, 1);
+        assert_eq!(count_backups(&home), 1);
     }
 
     #[test]
     fn preserves_existing_config_and_backs_up_before_editing() {
         let repo = TestRepo::new();
-        let config = repo.root.join("config.toml");
+        let home = repo.root.join("codex-home");
+        fs::create_dir_all(&home).unwrap();
         fs::write(
-            &config,
+            home.join("config.toml"),
             "# my settings\nmodel = \"gpt-5.6-terra\"\n\n[features]\nother = true\n",
         )
         .unwrap();
-        let mut output = Vec::new();
 
-        init_with_paths(&repo.root, &config, &mut output).unwrap();
+        init_with_paths(&repo.root, &home, &mut Vec::new()).unwrap();
 
-        let updated = fs::read_to_string(&config).unwrap();
+        let updated = fs::read_to_string(home.join("config.toml")).unwrap();
         assert!(updated.contains("model = \"gpt-5.6-terra\""));
         assert!(updated.contains("other = true"));
         assert!(updated.contains("hooks = true"));
         assert!(updated.contains("# my settings"));
-
-        let backups = fs::read_dir(config.parent().unwrap())
-            .unwrap()
-            .filter_map(Result::ok)
-            .filter(|entry| entry.file_name().to_string_lossy().contains("tractus-bak"))
-            .count();
-        assert_eq!(backups, 1);
+        // hooks.json is new (no backup); config.toml existed (one backup).
+        assert_eq!(count_backups(&home), 1);
     }
 
     #[test]
     fn missing_wrapper_is_an_error() {
         let repo = TestRepo::new();
         fs::remove_file(repo.root.join(WRAPPER_RELATIVE)).unwrap();
-        let config = repo.root.join("config.toml");
-        let mut output = Vec::new();
+        let home = repo.root.join("codex-home");
 
         assert!(matches!(
-            init_with_paths(&repo.root, &config, &mut output),
+            init_with_paths(&repo.root, &home, &mut Vec::new()),
             Err(InitError::WrapperMissing { .. })
         ));
     }

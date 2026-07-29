@@ -25,11 +25,11 @@ Requires Codex CLI **v0.114 or newer** with experimental hooks, on macOS or Linu
 
 One-time, idempotent setup that replaces the previous manual steps:
 
-- Generates the machine-local `.codex/hooks.json` pointing at the committed self-locating wrapper (covers both `Bash` and native `apply_patch`). The file is gitignored, so every clone generates its own absolute path.
+- Installs the Codex hook **globally** in `~/.codex/hooks.json` (covers both `Bash` and native `apply_patch`), pointing at the committed self-locating wrapper. It **merges** into any existing hooks rather than clobbering them, and backs up the file before editing. A global install means enforcement applies to **every** project you launch through `tractus`, not just this repo.
 - Enables the experimental hook feature flag in `~/.codex/config.toml`, preserving your existing settings and writing a timestamped backup before any edit. (Respects `CODEX_HOME`.)
 - Verifies the `tractusd` and `tractus-hook` binaries are built and reports anything missing.
 
-Safe to re-run: unchanged files are left untouched.
+Safe to re-run: unchanged files are left untouched. The global hook is safe to leave installed: it **no-ops for any Codex session `tractus` did not launch** (detected via the `TRACTUS_WORKSPACE_ROOT` marker the launcher exports), so ordinary Codex work is never intercepted or blocked.
 
 ### `tractus`
 
