@@ -21,7 +21,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_DEMO_SHELL = (PROJECT_ROOT / "target" / "debug" / "ct-shim").resolve()
+DEFAULT_DEMO_SHELL = (PROJECT_ROOT / "target" / "debug" / "tractus-shim").resolve()
 
 
 @dataclass

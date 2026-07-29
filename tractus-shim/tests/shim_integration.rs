@@ -1,9 +1,3 @@
-use chaos_core::contract::{ContractSpec, Effects, GitOpSet, OpClass, OpSet};
-use chaos_core::parse::SimpleCommand;
-use chaosd::handoff;
-use chaosd::server::{serve, ServerConfig};
-use chaosd::state::shared_state;
-use chaosd::twin::{TwinExecutor, TwinOutcome};
 use serde_json::json;
 use std::future::Future;
 use std::io::Write;
@@ -15,6 +9,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
+use tractus_core::contract::{ContractSpec, Effects, GitOpSet, OpClass, OpSet};
+use tractus_core::parse::SimpleCommand;
+use tractusd::handoff;
+use tractusd::server::{serve, ServerConfig};
+use tractusd::state::shared_state;
+use tractusd::twin::{TwinExecutor, TwinOutcome};
 
 static NEXT_TEST: AtomicUsize = AtomicUsize::new(0);
 
@@ -87,7 +87,7 @@ async fn invoke(socket: &Path, cwd: &Path, command: String) -> Output {
     let socket = socket.to_path_buf();
     let cwd = cwd.to_path_buf();
     tokio::task::spawn_blocking(move || {
-        std::process::Command::new(env!("CARGO_BIN_EXE_ct-shim"))
+        std::process::Command::new(env!("CARGO_BIN_EXE_tractus-shim"))
             .arg("-c")
             .arg(command)
             .current_dir(cwd)
@@ -104,7 +104,7 @@ async fn invoke_repl(socket: &Path, cwd: &Path, input: Vec<u8>, path: &Path) -> 
     let cwd = cwd.to_path_buf();
     let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || {
-        let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_ct-shim"))
+        let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_tractus-shim"))
             .current_dir(cwd)
             .env("TRACTUS_SOCK", socket)
             .env("PATH", path)
@@ -170,7 +170,7 @@ async fn shim_executes_only_allowed_commands_and_fails_closed() {
     assert!(!daemon_down.exists());
     assert_eq!(
         String::from_utf8(down.stdout).unwrap(),
-        "Tractus daemon unreachable; command not executed. Start chaosd or unset SHELL.\n"
+        "Tractus daemon unreachable; command not executed. Start tractusd or unset SHELL.\n"
     );
 
     daemon.abort();
@@ -231,7 +231,7 @@ async fn repl_executes_allowed_commands_and_returns_block_handoffs() {
 
 #[test]
 fn shim_rejects_wrong_arguments_with_usage() {
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_ct-shim"))
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_tractus-shim"))
         .arg("-x")
         .arg("touch should-not-run")
         .output()
@@ -240,6 +240,6 @@ fn shim_rejects_wrong_arguments_with_usage() {
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "usage: ct-shim -c <command>\n"
+        "usage: tractus-shim -c <command>\n"
     );
 }

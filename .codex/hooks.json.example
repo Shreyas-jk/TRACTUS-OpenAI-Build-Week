@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/ABSOLUTE/PATH/TO/tractus/.codex/run-ct-hook.sh"
+            "command": "/ABSOLUTE/PATH/TO/tractus/.codex/run-tractus-hook.sh"
           }
         ]
       }

@@ -8,4 +8,4 @@ twin-clean:
 	done
 
 twin-test: twin-clean
-	$(HOME)/.cargo/bin/cargo test -p chaosd -- --ignored twin --test-threads=1
+	$(HOME)/.cargo/bin/cargo test -p tractusd -- --ignored twin --test-threads=1

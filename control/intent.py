@@ -57,7 +57,7 @@ GIT_OPERATION_BITS = {
 }
 
 # These are glob patterns because this is the control-plane representation sent
-# to chaos-core's ContractSpec compiler, not the prose shown in the UI.
+# to tractus-core's ContractSpec compiler, not the prose shown in the UI.
 ARTIFACT_PATHS = (
     "target/**",
     "node_modules/**",
@@ -78,9 +78,9 @@ Return only the structured contract. Apply these rules exactly:
 
 
 class ContractSpec(BaseModel):
-    """Human-readable mirror of chaos-core's ContractSpec fields.
+    """Human-readable mirror of tractus-core's ContractSpec fields.
 
-    `chaos-core` serializes its operation sets as bitsets. The control plane uses
+    `tractus-core` serializes its operation sets as bitsets. The control plane uses
     names for structured extraction and the toggle card, then converts them at
     the daemon boundary with :meth:`daemon_wire`.
     """
@@ -93,7 +93,7 @@ class ContractSpec(BaseModel):
     network: bool = False
 
     def daemon_wire(self) -> dict[str, Any]:
-        """Serialize to the exact bitset payload expected by chaosd."""
+        """Serialize to the exact bitset payload expected by tractusd."""
         return {
             "task": self.task,
             "allowed_paths": self.allowed_paths,

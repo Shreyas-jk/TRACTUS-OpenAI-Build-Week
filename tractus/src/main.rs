@@ -1,4 +1,3 @@
-use chaos_core::contract::{GitOp, GitOpSet, OpClass, OpSet};
 use std::env;
 use std::error::Error;
 use std::fmt;
@@ -7,6 +6,7 @@ use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 use tractus::store::{ContractDocument, ContractStore, StoreError};
+use tractus_core::contract::{GitOp, GitOpSet, OpClass, OpSet};
 
 mod init;
 mod launcher;
@@ -563,7 +563,7 @@ fn build_contract(
     deps_may_change: bool,
     allowed_git_ops: Vec<GitOp>,
     network: bool,
-) -> chaos_core::contract::ContractSpec {
+) -> tractus_core::contract::ContractSpec {
     let mut allowed_ops = OpSet::empty();
     for operation in allowed_operations {
         allowed_ops.insert(operation);
@@ -572,7 +572,7 @@ fn build_contract(
     for operation in allowed_git_ops {
         git_ops.insert(operation);
     }
-    chaos_core::contract::ContractSpec {
+    tractus_core::contract::ContractSpec {
         task,
         allowed_paths,
         allowed_ops,
@@ -584,7 +584,7 @@ fn build_contract(
 
 fn render_contract_preview<W: Write>(
     output: &mut W,
-    contract: &chaos_core::contract::ContractSpec,
+    contract: &tractus_core::contract::ContractSpec,
 ) -> Result<(), CliError> {
     writeln!(output, "")?;
     writeln!(output, "INTENT CONTRACT")?;
@@ -939,7 +939,7 @@ mod tests {
         let workspace = TestWorkspace::new();
         let store = ContractStore::open(&workspace.root).unwrap();
         store
-            .create(chaos_core::contract::ContractSpec {
+            .create(tractus_core::contract::ContractSpec {
                 task: "older task".to_owned(),
                 allowed_paths: vec!["src/**".to_owned(), "target/**".to_owned()],
                 allowed_ops: OpSet::empty(),
@@ -949,7 +949,7 @@ mod tests {
             })
             .unwrap();
         let newest = store
-            .create(chaos_core::contract::ContractSpec {
+            .create(tractus_core::contract::ContractSpec {
                 task: "newest task".to_owned(),
                 allowed_paths: vec!["src/**".to_owned(), "target/**".to_owned()],
                 allowed_ops: OpSet::empty(),

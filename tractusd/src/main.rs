@@ -1,7 +1,7 @@
-use chaosd::server::{bind_default_listener, serve, ServerConfig};
-use chaosd::state::shared_state;
-use chaosd::twin::PooledTwin;
 use std::sync::Arc;
+use tractusd::server::{bind_default_listener, serve, ServerConfig};
+use tractusd::state::shared_state;
+use tractusd::twin::PooledTwin;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
@@ -20,6 +20,6 @@ async fn main() {
     ));
 
     if let Err(error) = serve(listener, config).await {
-        tracing::error!(%error, "chaosd stopped");
+        tracing::error!(%error, "tractusd stopped");
     }
 }

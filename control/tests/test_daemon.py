@@ -16,7 +16,7 @@ def test_default_socket_prefers_the_current_workspace_contract_store(
     (tmp_path / ".tractus").mkdir()
     monkeypatch.chdir(tmp_path)
 
-    assert default_socket_path() == tmp_path / ".tractus" / "chaosd.sock"
+    assert default_socket_path() == tmp_path / ".tractus" / "tractusd.sock"
 
 
 def test_default_socket_honors_an_explicit_workspace_root(
@@ -26,7 +26,7 @@ def test_default_socket_honors_an_explicit_workspace_root(
     monkeypatch.delenv("TRACTUS_SOCK", raising=False)
     monkeypatch.setenv("TRACTUS_WORKSPACE_ROOT", str(workspace))
 
-    assert default_socket_path() == workspace / ".tractus" / "chaosd.sock"
+    assert default_socket_path() == workspace / ".tractus" / "tractusd.sock"
 
 
 @pytest.mark.asyncio

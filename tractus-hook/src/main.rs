@@ -1,7 +1,3 @@
-use ct_shim::{
-    request_edit_verdict_with_resolve_mode, request_verdict_with_resolve_mode, ResolveMode,
-    ShimVerdict,
-};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -10,9 +6,13 @@ use std::fs::OpenOptions;
 use std::io::{self, Read, Write};
 use std::panic;
 use std::path::Path;
+use tractus_shim::{
+    request_edit_verdict_with_resolve_mode, request_verdict_with_resolve_mode, ResolveMode,
+    ShimVerdict,
+};
 
 const UNAVAILABLE_REASON: &str =
-    "Tractus unavailable; command denied. Start chaosd and retry, or amend the contract explicitly.";
+    "Tractus unavailable; command denied. Start tractusd and retry, or amend the contract explicitly.";
 const UNKNOWN_PATCH_PATHS_REASON: &str =
     "Tractus could not determine which files this patch touches; command denied until the paths are explicit.";
 
@@ -102,7 +102,7 @@ fn payload_cwd(payload: &PreToolUsePayload) -> &Path {
     match payload.cwd.as_deref().filter(|cwd| !cwd.is_empty()) {
         Some(cwd) => Path::new(cwd),
         None => {
-            eprintln!("Tractus ct-hook: missing cwd in PreToolUse payload; using .");
+            eprintln!("Tractus tractus-hook: missing cwd in PreToolUse payload; using .");
             Path::new(".")
         }
     }
@@ -113,7 +113,7 @@ fn capture_raw_input(input: &[u8]) {
         return;
     };
     if let Err(error) = append_raw_capture(Path::new(&path), input) {
-        eprintln!("Tractus ct-hook: failed to write raw hook capture: {error}");
+        eprintln!("Tractus tractus-hook: failed to write raw hook capture: {error}");
     }
 }
 

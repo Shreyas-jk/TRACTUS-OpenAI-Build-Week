@@ -1,8 +1,3 @@
-use chaos_core::contract::{ContractSpec, GitOpSet, OpClass, OpSet};
-use chaosd::handoff;
-use chaosd::server::{serve, ServerConfig};
-use chaosd::state::shared_state;
-use chaosd::twin::NoTwin;
 use serde_json::{json, Value};
 use std::io::Write;
 use std::path::Path;
@@ -11,17 +6,22 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
+use tractus_core::contract::{ContractSpec, GitOpSet, OpClass, OpSet};
+use tractusd::handoff;
+use tractusd::server::{serve, ServerConfig};
+use tractusd::state::shared_state;
+use tractusd::twin::NoTwin;
 
 static NEXT_TEST: AtomicUsize = AtomicUsize::new(0);
 const UNAVAILABLE_REASON: &str =
-    "Tractus unavailable; command denied. Start chaosd and retry, or amend the contract explicitly.";
+    "Tractus unavailable; command denied. Start tractusd and retry, or amend the contract explicitly.";
 
 fn deps_locked_contract() -> ContractSpec {
     let mut allowed_ops = OpSet::empty();
     allowed_ops.insert(OpClass::Edit);
     allowed_ops.insert(OpClass::Test);
     ContractSpec {
-        task: "ct-hook integration test".to_owned(),
+        task: "tractus-hook integration test".to_owned(),
         allowed_paths: vec!["**".to_owned()],
         allowed_ops,
         deps_may_change: false,
@@ -105,7 +105,7 @@ async fn invoke_with_contract(
     let contract_id = contract_id.map(str::to_owned);
     let input = serde_json::to_vec(&payload).unwrap();
     tokio::task::spawn_blocking(move || {
-        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_ct-hook"));
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_tractus-hook"));
         command
             .current_dir(cwd)
             .env("TRACTUS_SOCK", socket)

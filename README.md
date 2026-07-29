@@ -27,7 +27,7 @@ One-time, idempotent setup that replaces the previous manual steps:
 
 - Generates the machine-local `.codex/hooks.json` pointing at the committed self-locating wrapper (covers both `Bash` and native `apply_patch`). The file is gitignored, so every clone generates its own absolute path.
 - Enables the experimental hook feature flag in `~/.codex/config.toml`, preserving your existing settings and writing a timestamped backup before any edit. (Respects `CODEX_HOME`.)
-- Verifies the `chaosd` and `ct-hook` binaries are built and reports anything missing.
+- Verifies the `tractusd` and `tractus-hook` binaries are built and reports anything missing.
 
 Safe to re-run: unchanged files are left untouched.
 
@@ -42,7 +42,7 @@ The individual subcommands remain for scripting:
 
 Set `TRACTUS_SOCK` only when deliberately overriding the workspace-local socket.
 
-Commands outside the active contract are denied inline before Codex runs them. `ct-hook` sends proposals to the same `chaosd` instance as `ct-shim`, so the dashboard lights up live with no extra wiring — start it from the project root (or set `TRACTUS_WORKSPACE_ROOT` to it) and it selects `.tractus/chaosd.sock` automatically.
+Commands outside the active contract are denied inline before Codex runs them. `tractus-hook` sends proposals to the same `tractusd` instance as `tractus-shim`, so the dashboard lights up live with no extra wiring — start it from the project root (or set `TRACTUS_WORKSPACE_ROOT` to it) and it selects `.tractus/tractusd.sock` automatically.
 
 > **Hook payload validation:** verified against a live Codex CLI v0.145.0 run on macOS. Both `Bash` and native `apply_patch` arrive as `PreToolUse` payloads with a string in `tool_input.command`. Set `TRACTUS_HOOK_LOG=/path/to/capture.log` to capture future version changes before relying on a new Codex release.
 

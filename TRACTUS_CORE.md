@@ -9,17 +9,17 @@ Three Rust artifacts in one cargo workspace, plus the Python control plane:
 ```
 tractus/
 ├── Cargo.toml            # workspace
-├── chaos-core/           # lib: contract, parse, classify, verdict, history. Pure, no IO.
-├── chaosd/               # bin: daemon. Owns enforcement state, twin pool, event bus.
-├── ct-shim/              # bin: interceptor. Thin client invoked per command.
+├── tractus-core/           # lib: contract, parse, classify, verdict, history. Pure, no IO.
+├── tractusd/               # bin: daemon. Owns enforcement state, twin pool, event bus.
+├── tractus-shim/              # bin: interceptor. Thin client invoked per command.
 └── control/              # Python: FastAPI UI server + GPT-5.6 calls (separate from workspace)
 ```
 
-- **`ct-shim`** mimics the `sh -c` interface so any agent that shells out can use it: Codex CLI is configured with `SHELL=ct-shim` (or its shell hook), and each proposed command arrives as `ct-shim -c "<command>"`. The shim sends the command to `chaosd` over a Unix domain socket, waits for the verdict, then either `exec`s the real `/bin/sh -c <command>` (preserving cwd, env, tty, and exit code) or prints the synthetic handoff output and exits 1. The shim contains zero decision logic.
-- **`chaosd`** is the single long-lived daemon: loads the active contract, runs the verdict pipeline from `chaos-core`, owns the Docker twin pool, holds `NEEDS_HUMAN` commands pending user decisions, and broadcasts events. Socket at `$XDG_RUNTIME_DIR/tractus.sock`, JSON-lines protocol.
+- **`tractus-shim`** mimics the `sh -c` interface so any agent that shells out can use it: Codex CLI is configured with `SHELL=tractus-shim` (or its shell hook), and each proposed command arrives as `tractus-shim -c "<command>"`. The shim sends the command to `tractusd` over a Unix domain socket, waits for the verdict, then either `exec`s the real `/bin/sh -c <command>` (preserving cwd, env, tty, and exit code) or prints the synthetic handoff output and exits 1. The shim contains zero decision logic.
+- **`tractusd`** is the single long-lived daemon: loads the active contract, runs the verdict pipeline from `tractus-core`, owns the Docker twin pool, holds `NEEDS_HUMAN` commands pending user decisions, and broadcasts events. Socket at `$XDG_RUNTIME_DIR/tractus.sock`, JSON-lines protocol.
 - **`control/` (FastAPI)** connects to the same socket: subscribes to the event stream for the UI WebSocket, sends `set_contract` after intent extraction, and sends `resolve` when the user clicks approve/reject. All GPT-5.6 calls live here, never in Rust, preserving the "no LLM in the enforcement path" invariant at the process boundary.
 
-## 2. Core data types (`chaos-core`)
+## 2. Core data types (`tractus-core`)
 
 ```rust
 use globset::GlobSet;
@@ -172,23 +172,23 @@ The same function checks twin-observed diffs: the twin's file diff is converted 
 ## 6. Loop detector (`history.rs`)
 
 - Signature: `blake3(argv0, subcommand, sorted_flags, exit_class)` where `exit_class` buckets exit codes (0 / nonzero / signal).
-- Ring buffer of the last 20 executed commands per agent session (post-execution, shim reports exit codes back to chaosd).
+- Ring buffer of the last 20 executed commands per agent session (post-execution, shim reports exit codes back to tractusd).
 - 3 identical failure signatures within the window → `Loop`. Only failures count; re-running `cargo test` successfully is normal.
 
-## 7. chaosd wire protocol (JSON lines over UDS)
+## 7. tractusd wire protocol (JSON lines over UDS)
 
 ```jsonc
-// ct-shim → chaosd
+// tractus-shim → tractusd
 {"type":"propose","id":"c17","cmd":"cargo add axios@1.6","cwd":"/work/repo","env":{"DIR":"..."} }
 {"type":"report","id":"c17","exit_code":101}            // after real execution, feeds history
 
-// chaosd → ct-shim
+// tractusd → tractus-shim
 {"type":"verdict","id":"c17","action":"allow"}
 {"type":"verdict","id":"c17","action":"block","exit_code":1,
  "synthetic_stdout":"Command blocked by Tractus: dependency changes are not in scope..."}
 {"type":"verdict","id":"c17","action":"hold"}            // NEEDS_HUMAN, shim waits (60 s cap)
 
-// control (FastAPI) ↔ chaosd
+// control (FastAPI) ↔ tractusd
 {"type":"subscribe"}                                     // → stream of contract/proposed/twin-diff/verdict/blocked/loop-halt events
 {"type":"set_contract","contract":{...}}
 {"type":"resolve","id":"c17","decision":"approve_once"}  // or "reject"
@@ -196,7 +196,7 @@ The same function checks twin-observed diffs: the twin's file diff is converted 
 
 The `hold` path implements DESIGN.md 4.1: shim blocks up to 60 s for a `resolve`; timeout or reject produces the deferred synthetic handoff.
 
-## 8. Twin executor (`chaosd::twin`)
+## 8. Twin executor (`tractusd::twin`)
 
 - v1 shells out to the `docker` CLI (no bollard dependency; one less thing to debug): `docker run --rm --network=none --pids-limit=256 -v <lowerdir>:/work:ro -v <upperdir>:/upper ...` with an overlay mount inside the container so the workspace snapshot is copy-on-write.
 - Pool of 2 pre-warmed containers, replenished in the background after each use.
@@ -210,18 +210,18 @@ The `hold` path implements DESIGN.md 4.1: shim blocks up to 60 s for a `resolve`
 |---|---|
 | Classifier corpus: every family × verdict snapshot | `insta` snapshot tests |
 | Never-allow-by-default invariant: random/fuzzed strings never yield `InScope` without a corpus match | `proptest` |
-| The 5 demo scenarios end-to-end through ct-shim against a scripted fake agent | integration test, runs in CI on every commit |
+| The 5 demo scenarios end-to-end through tractus-shim against a scripted fake agent | integration test, runs in CI on every commit |
 | Twin timeout: `sleep 10` returns `NeedsHuman(TwinTimeout)` in ~3 s | tokio integration test |
 | Loop detector: 3 identical failing `cargo build`s → `Loop` | unit |
 | Synthetic handoff phrasing: Codex CLI asks the user instead of retrying | manual, Thu 16, logged transcripts in repo |
 
 ## 10. Crates
 
-`serde`, `serde_json`, `shell-words`, `globset`, `blake3`, `tokio` (chaosd/shim only), `tracing`, `ron`; dev: `insta`, `proptest`. `chaos-core` itself is sync and dependency-light so the whole verdict path unit-tests without a runtime.
+`serde`, `serde_json`, `shell-words`, `globset`, `blake3`, `tokio` (tractusd/shim only), `tracing`, `ron`; dev: `insta`, `proptest`. `tractus-core` itself is sync and dependency-light so the whole verdict path unit-tests without a runtime.
 
 ## 11. Build order (maps to DESIGN.md Section 9)
 
 - **Mon 13:** workspace scaffold, data types, Stage 0 to 3 of the parser, corpus schema.
 - **Tue 14:** classifier + verdict + proof traces, loop detector, snapshot/property tests green.
-- **Wed 15:** ct-shim + chaosd + UDS protocol; Docker twin with timeout and diffing.
+- **Wed 15:** tractus-shim + tractusd + UDS protocol; Docker twin with timeout and diffing.
 - **Thu 16 onward:** per DESIGN.md (control plane, UI, hardening, Sunday video).

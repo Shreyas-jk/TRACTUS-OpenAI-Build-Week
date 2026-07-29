@@ -50,7 +50,7 @@ user request ──▶ GPT-5.6: intent extraction ──▶ Intent Contract (use
 └──────────────┘   verdict          └──────────────┬─────────────────┘
                                                     ▼
                                     ┌─────────────────────────────────┐
-                                    │  Rust engine (chaos-core)        │
+                                    │  Rust engine (tractus-core)        │
                                     │  1. argv split (shell-words)     │
                                     │  2. command classifier (corpus)  │
                                     │  3. contract checker + proofs    │
@@ -83,7 +83,7 @@ user request ──▶ GPT-5.6: intent extraction ──▶ Intent Contract (use
 
 ### 4.1 Interceptor
 
-Wrapper the agent uses as its shell (Codex CLI hook or `SHELL=` shim). Captures each proposed command plus a cheap snapshot (cwd, git status hash). Blocks until chaos-core returns a verdict.
+Wrapper the agent uses as its shell (Codex CLI hook or `SHELL=` shim). Captures each proposed command plus a cheap snapshot (cwd, git status hash). Blocks until tractus-core returns a verdict.
 
 **Synthetic agent handoffs.** A block must guide the agent, not brick its loop. The interceptor never returns a bare non-zero exit code; every non-allow verdict maps to synthetic terminal output fed back to the agent as if the command had run:
 
@@ -93,7 +93,7 @@ Wrapper the agent uses as its shell (Codex CLI hook or `SHELL=` shim). Captures 
 
 Messages are written for agent consumption (imperative, next-action oriented) and tested against Codex CLI to confirm the agent asks for permission instead of thrashing.
 
-### 4.2 Rust engine (`chaos-core`)
+### 4.2 Rust engine (`tractus-core`)
 
 The deterministic blocking path. Zero LLM calls.
 
@@ -152,7 +152,7 @@ In the build: Sol for architecture decisions and the contract-checker design; Te
 
 | Day | Deliverable |
 |---|---|
-| Mon 13 | Repo scaffold, chaos-core skeleton, contract schema, classifier corpus drafted. Offline (credits pending). |
+| Mon 13 | Repo scaffold, tractus-core skeleton, contract schema, classifier corpus drafted. Offline (credits pending). |
 | Tue 14 | Contract checker + proof traces; classifier v1; destructive/dep-change corpus tests green; loop detector. |
 | Wed 15 | Interceptor shim wrapping Codex CLI; Docker twin with snapshot diffing and pre-warmed pool. |
 | Thu 16 | GPT-5.6 intent extraction + divergence explainer wired; FastAPI control plane + WS events. |

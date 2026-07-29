@@ -2,12 +2,10 @@
 //!
 //! It turns the selected durable document into a named daemon contract before
 //! Codex starts, then exports the matching socket and contract id to Codex and
-//! all of its hooks. A workspace-local socket is essential: `chaosd` owns a
+//! all of its hooks. A workspace-local socket is essential: `tractusd` owns a
 //! workspace root, so sharing one per-user socket across repositories would
 //! make path enforcement ambiguous.
 
-use chaos_core::contract::ContractError;
-use ct_shim::set_contract_at;
 use serde_json::Value;
 use std::env;
 use std::error::Error;
@@ -20,6 +18,8 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 use tractus::store::{ContractDocument, ContractStore, StoreError};
+use tractus_core::contract::ContractError;
+use tractus_shim::set_contract_at;
 
 const DAEMON_STARTUP_ATTEMPTS: usize = 40;
 const DAEMON_STARTUP_INTERVAL: Duration = Duration::from_millis(50);
@@ -27,7 +27,7 @@ const DAEMON_STARTUP_INTERVAL: Duration = Duration::from_millis(50);
 #[derive(Clone, Debug)]
 pub struct LaunchConfig {
     pub socket_path: PathBuf,
-    pub chaosd_bin: PathBuf,
+    pub tractusd_bin: PathBuf,
     pub codex_bin: PathBuf,
 }
 
@@ -38,7 +38,7 @@ impl LaunchConfig {
                 .filter(|path| !path.is_empty())
                 .map(PathBuf::from)
                 .unwrap_or_else(|| workspace_socket_path(workspace_root)),
-            chaosd_bin: binary_from_environment("TRACTUS_CHAOSD_BIN", "chaosd"),
+            tractusd_bin: binary_from_environment("TRACTUS_DAEMON_BIN", "tractusd"),
             codex_bin: binary_from_environment("TRACTUS_CODEX_BIN", "codex"),
         }
     }
@@ -69,7 +69,7 @@ fn launch_codex_with_config(
     register_contract(
         &workspace_root,
         &config.socket_path,
-        &config.chaosd_bin,
+        &config.tractusd_bin,
         &document.id,
         &contract,
     )?;
@@ -91,7 +91,7 @@ fn launch_codex_with_config(
 fn register_contract(
     workspace_root: &Path,
     socket_path: &Path,
-    chaosd_bin: &Path,
+    tractusd_bin: &Path,
     contract_id: &str,
     contract: &Value,
 ) -> Result<(), LauncherError> {
@@ -103,7 +103,7 @@ fn register_contract(
         });
     }
 
-    let mut daemon = Command::new(chaosd_bin)
+    let mut daemon = Command::new(tractusd_bin)
         .current_dir(workspace_root)
         .env("TRACTUS_SOCK", socket_path)
         .stdin(Stdio::null())
@@ -111,7 +111,7 @@ fn register_contract(
         .stderr(Stdio::null())
         .spawn()
         .map_err(|source| LauncherError::Io {
-            path: chaosd_bin.to_path_buf(),
+            path: tractusd_bin.to_path_buf(),
             source,
         })?;
 
@@ -120,11 +120,11 @@ fn register_contract(
             return Ok(());
         }
         if let Some(status) = daemon.try_wait().map_err(|source| LauncherError::Io {
-            path: chaosd_bin.to_path_buf(),
+            path: tractusd_bin.to_path_buf(),
             source,
         })? {
             return Err(LauncherError::DaemonExited {
-                program: chaosd_bin.to_path_buf(),
+                program: tractusd_bin.to_path_buf(),
                 status: status.code(),
             });
         }
@@ -159,7 +159,7 @@ fn canonical_workspace(workspace_root: &Path) -> Result<PathBuf, LauncherError> 
 }
 
 fn workspace_socket_path(workspace_root: &Path) -> PathBuf {
-    workspace_root.join(".tractus").join("chaosd.sock")
+    workspace_root.join(".tractus").join("tractusd.sock")
 }
 
 fn socket_is_live(socket_path: &Path) -> bool {
@@ -274,11 +274,11 @@ impl From<StoreError> for LauncherError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chaos_core::contract::{GitOp, GitOpSet, OpClass, OpSet};
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::fs::PermissionsExt;
     use std::os::unix::net::UnixListener;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use tractus_core::contract::{GitOp, GitOpSet, OpClass, OpSet};
 
     static NEXT_TEST_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 
@@ -306,7 +306,7 @@ mod tests {
             git_ops.insert(GitOp::Status);
             ContractStore::open(&self.root)
                 .unwrap()
-                .create(chaos_core::contract::ContractSpec {
+                .create(tractus_core::contract::ContractSpec {
                     task: "fix the flaky test".to_owned(),
                     allowed_paths: vec!["src/**".to_owned(), "target/**".to_owned()],
                     allowed_ops: operations,
@@ -385,7 +385,7 @@ mod tests {
         let marker = workspace.root.join("codex-environment.txt");
         let config = LaunchConfig {
             socket_path: socket.clone(),
-            chaosd_bin: PathBuf::from("/bin/false"),
+            tractusd_bin: PathBuf::from("/bin/false"),
             codex_bin: fake_codex(&workspace, &marker),
         };
 
@@ -418,7 +418,7 @@ mod tests {
         let marker = workspace.root.join("codex-should-not-run.txt");
         let config = LaunchConfig {
             socket_path: workspace_socket_path(&workspace.root),
-            chaosd_bin: PathBuf::from("/bin/false"),
+            tractusd_bin: PathBuf::from("/bin/false"),
             codex_bin: fake_codex(&workspace, &marker),
         };
 
@@ -464,7 +464,7 @@ mod tests {
         let marker = workspace.root.join("codex-should-not-run.txt");
         let config = LaunchConfig {
             socket_path: socket,
-            chaosd_bin: PathBuf::from("/bin/false"),
+            tractusd_bin: PathBuf::from("/bin/false"),
             codex_bin: fake_codex(&workspace, &marker),
         };
 
@@ -483,7 +483,7 @@ mod tests {
         let marker = workspace.root.join("codex-should-not-run.txt");
         let config = LaunchConfig {
             socket_path: workspace_socket_path(&workspace.root),
-            chaosd_bin: PathBuf::from("/bin/false"),
+            tractusd_bin: PathBuf::from("/bin/false"),
             codex_bin: fake_codex(&workspace, &marker),
         };
 

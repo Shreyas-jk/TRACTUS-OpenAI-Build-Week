@@ -17,9 +17,9 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use toml_edit::{value, DocumentMut, Item, Table};
 
-const WRAPPER_RELATIVE: &str = ".codex/run-ct-hook.sh";
+const WRAPPER_RELATIVE: &str = ".codex/run-tractus-hook.sh";
 const HOOKS_RELATIVE: &str = ".codex/hooks.json";
-const REQUIRED_BINARIES: &[&str] = &["chaosd", "ct-hook"];
+const REQUIRED_BINARIES: &[&str] = &["tractusd", "tractus-hook"];
 
 /// Resolve the repository and global config paths, then run setup.
 pub fn run_init<W: Write>(output: &mut W) -> Result<(), InitError> {

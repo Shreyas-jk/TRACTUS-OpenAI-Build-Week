@@ -1,5 +1,3 @@
-use chaos_core::contract::{DepChange, Effects, OpClass, Reason};
-use chaos_core::parse::SimpleCommand;
 use std::fs;
 use std::future::Future;
 use std::io;
@@ -16,6 +14,8 @@ use std::time::SystemTime;
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
+use tractus_core::contract::{DepChange, Effects, OpClass, Reason};
+use tractus_core::parse::SimpleCommand;
 
 const TWIN_TIMEOUT: Duration = Duration::from_secs(3);
 const OVERLAY_UNAVAILABLE: &str = "TRACTUS_OVERLAY_UNAVAILABLE";
@@ -922,10 +922,10 @@ mod tests {
         twin.start();
         wait_for_ready(&twin).await;
 
-        let current = root.join("created-outside-chaosd.txt");
+        let current = root.join("created-outside-tractusd.txt");
         fs::write(&current, "written by an editor, not a report message").unwrap();
 
-        let command = simple_command(&["rm", "created-outside-chaosd.txt"]);
+        let command = simple_command(&["rm", "created-outside-tractusd.txt"]);
         match twin.speculate(&command, &root).await {
             TwinOutcome::Effects(effects) => {
                 assert!(effects.deletes.contains(&current));

@@ -1,11 +1,10 @@
 //! Durable contract documents for one workspace.
 //!
 //! The on-disk contract is intentionally the same [`ContractSpec`] consumed by
-//! `chaos-core` and `chaosd`; a compiled `Contract` is runtime-only. Documents
+//! `tractus-core` and `tractusd`; a compiled `Contract` is runtime-only. Documents
 //! live under `<workspace>/.tractus/contracts`, while `state.json` records the
 //! selected document and a bounded LRU retention policy.
 
-use chaos_core::contract::{ContractError, ContractSpec};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt;
@@ -14,6 +13,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tractus_core::contract::{ContractError, ContractSpec};
 
 const SCHEMA_VERSION: u32 = 1;
 const TRACTUS_DIRECTORY: &str = ".tractus";
@@ -38,7 +38,7 @@ pub struct ContractDocument {
 }
 
 impl ContractDocument {
-    /// Returns the exact contract payload accepted by `chaos-core`.
+    /// Returns the exact contract payload accepted by `tractus-core`.
     pub fn spec(&self) -> ContractSpec {
         self.contract.clone()
     }
@@ -507,8 +507,8 @@ impl Error for StoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chaos_core::contract::{GitOp, GitOpSet, OpClass, OpSet};
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use tractus_core::contract::{GitOp, GitOpSet, OpClass, OpSet};
 
     static NEXT_TEST_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 

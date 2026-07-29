@@ -106,32 +106,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
-name = "chaos-core"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "globset",
- "insta",
- "proptest",
- "ron",
- "serde",
- "serde_json",
- "shell-words",
-]
-
-[[package]]
-name = "chaosd"
-version = "0.1.0"
-dependencies = [
- "chaos-core",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "console"
 version = "0.16.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -155,31 +129,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b2a41393f66f16b0823bb79094d54ac5fbd34ab292ddafb9a0456ac9f87d201"
 dependencies = [
  "libc",
-]
-
-[[package]]
-name = "ct-hook"
-version = "0.1.0"
-dependencies = [
- "chaos-core",
- "chaosd",
- "ct-shim",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "ct-shim"
-version = "0.1.0"
-dependencies = [
- "chaos-core",
- "chaosd",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -761,11 +710,62 @@ dependencies = [
 name = "tractus"
 version = "0.1.0"
 dependencies = [
- "chaos-core",
- "ct-shim",
  "serde",
  "serde_json",
  "toml_edit",
+ "tractus-core",
+ "tractus-shim",
+]
+
+[[package]]
+name = "tractus-core"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "globset",
+ "insta",
+ "proptest",
+ "ron",
+ "serde",
+ "serde_json",
+ "shell-words",
+]
+
+[[package]]
+name = "tractus-hook"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tokio",
+ "tractus-core",
+ "tractus-shim",
+ "tractusd",
+]
+
+[[package]]
+name = "tractus-shim"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "tractus-core",
+ "tractusd",
+]
+
+[[package]]
+name = "tractusd"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "tractus-core",
 ]
 
 [[package]]

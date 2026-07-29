@@ -1,14 +1,14 @@
-use ct_shim::{read_response, write_json, Response, ShimVerdict, HOLD_WAIT, REPORT_ACK_WAIT};
 use serde_json::json;
 use std::collections::HashMap;
 use std::env;
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::os::unix::net::UnixStream;
 use std::process::{self, Command};
+use tractus_shim::{read_response, write_json, Response, ShimVerdict, HOLD_WAIT, REPORT_ACK_WAIT};
 
 const DAEMON_UNREACHABLE: &str =
-    "Tractus daemon unreachable; command not executed. Start chaosd or unset SHELL.";
-const USAGE: &str = "usage: ct-shim -c <command>";
+    "Tractus daemon unreachable; command not executed. Start tractusd or unset SHELL.";
+const USAGE: &str = "usage: tractus-shim -c <command>";
 const PROMPT: &str = "tractus ▸ ";
 
 fn main() {
@@ -96,7 +96,7 @@ fn shell_command(args: &[String]) -> Option<String> {
 fn request_verdict(command: &str) -> Result<ShimVerdict, ()> {
     let cwd = env::current_dir().map_err(|_| ())?;
     let environment = env::vars().collect::<HashMap<_, _>>();
-    ct_shim::request_verdict(command, &cwd, "ct-shim", environment)
+    tractus_shim::request_verdict(command, &cwd, "tractus-shim", environment)
 }
 
 fn execute_and_report(command: &str, id: &str, connection: &mut UnixStream) -> i32 {

@@ -1,4 +1,4 @@
-"""Async JSON-lines client for the chaosd Unix-domain-socket protocol."""
+"""Async JSON-lines client for the tractusd Unix-domain-socket protocol."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typing import Any
 
 
 class DaemonProtocolError(RuntimeError):
-    """chaosd returned an incomplete or malformed JSON-lines response."""
+    """tractusd returned an incomplete or malformed JSON-lines response."""
 
 
 def default_socket_path() -> Path:
@@ -21,13 +21,13 @@ def default_socket_path() -> Path:
         return Path(configured)
     workspace_root = os.environ.get("TRACTUS_WORKSPACE_ROOT")
     if workspace_root:
-        return Path(workspace_root) / ".tractus" / "chaosd.sock"
+        return Path(workspace_root) / ".tractus" / "tractusd.sock"
     # `tractus codex` owns a daemon per workspace. When the dashboard is
     # started from that repository, its contract directory is sufficient to
     # select the same socket without making the presenter export an env var.
     local_store = Path.cwd() / ".tractus"
     if local_store.is_dir():
-        return local_store / "chaosd.sock"
+        return local_store / "tractusd.sock"
     runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
     if runtime_dir:
         return Path(runtime_dir) / "tractus.sock"
@@ -64,7 +64,7 @@ class DaemonClient:
             await _write_json(writer, message)
             line = await reader.readline()
             if not line:
-                raise DaemonProtocolError("chaosd closed the connection without responding")
+                raise DaemonProtocolError("tractusd closed the connection without responding")
             return _decode_json(line)
         finally:
             writer.close()
@@ -80,7 +80,7 @@ def _decode_json(line: bytes) -> dict[str, Any]:
     try:
         value = json.loads(line)
     except (TypeError, ValueError) as error:
-        raise DaemonProtocolError("chaosd sent malformed JSON") from error
+        raise DaemonProtocolError("tractusd sent malformed JSON") from error
     if not isinstance(value, dict):
-        raise DaemonProtocolError("chaosd JSON-lines messages must be objects")
+        raise DaemonProtocolError("tractusd JSON-lines messages must be objects")
     return value

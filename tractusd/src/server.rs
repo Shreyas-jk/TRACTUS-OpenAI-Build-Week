@@ -1,11 +1,6 @@
 use crate::handoff;
 use crate::state::{HoldDecision, PendingReport, SessionKey, SharedState};
 use crate::twin::{TwinExecutor, TwinOutcome};
-use chaos_core::classify::{classify, Classification};
-use chaos_core::contract::{ContractSpec, Effects, OpClass, ProofTrace, Reason, Verdict};
-use chaos_core::history::{ExitClass, History};
-use chaos_core::parse::{normalize_path, parse_with_env, ParseOutcome};
-use chaos_core::verdict::{assemble, check, combine_verdicts};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -18,6 +13,11 @@ use tokio::net::unix::OwnedWriteHalf;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{broadcast, oneshot};
 use tokio::time::{timeout, Duration};
+use tractus_core::classify::{classify, Classification};
+use tractus_core::contract::{ContractSpec, Effects, OpClass, ProofTrace, Reason, Verdict};
+use tractus_core::history::{ExitClass, History};
+use tractus_core::parse::{normalize_path, parse_with_env, ParseOutcome};
+use tractus_core::verdict::{assemble, check, combine_verdicts};
 
 const HOLD_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -72,7 +72,7 @@ pub async fn serve(listener: UnixListener, config: Arc<ServerConfig>) -> io::Res
         let config = Arc::clone(&config);
         tokio::spawn(async move {
             if let Err(error) = handle_connection(stream, config).await {
-                tracing::debug!(%error, "chaosd client connection closed with an error");
+                tracing::debug!(%error, "tractusd client connection closed with an error");
             }
         });
     }
@@ -726,10 +726,10 @@ mod tests {
     use crate::handoff;
     use crate::state::shared_state;
     use crate::twin::NoTwin;
-    use chaos_core::contract::{GitOp, GitOpSet, OpClass, OpSet};
     use serde_json::json;
     use std::fs;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use tractus_core::contract::{GitOp, GitOpSet, OpClass, OpSet};
 
     static NEXT_SOCKET: AtomicUsize = AtomicUsize::new(0);
 
