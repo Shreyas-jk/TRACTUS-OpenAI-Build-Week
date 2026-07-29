@@ -31,6 +31,8 @@ One-time, idempotent setup that replaces the previous manual steps:
 
 Safe to re-run: unchanged files are left untouched. The global hook is safe to leave installed: it **no-ops for any Codex session `tractus` did not launch** (detected via the `TRACTUS_WORKSPACE_ROOT` marker the launcher exports), so ordinary Codex work is never intercepted or blocked.
 
+**Hook trust:** Codex gates hooks behind a one-time trust prompt, so the first time it runs the Tractus hook it will ask you to approve it — do so once. To confirm the global hook actually fires on a real tool call, run `scripts/verify_hook.sh` (needs a Codex account with available usage); it launches a throwaway session outside any workspace and reports whether the hook was invoked.
+
 ### `tractus`
 
 Run with no command for the guided flow: it lists the recent contracts for the current repository (or launches the wizard if there are none), activates your choice, then starts Codex with it enforced. Pass Codex options after `--`, for example `tractus -- --model gpt-5.6-terra`.

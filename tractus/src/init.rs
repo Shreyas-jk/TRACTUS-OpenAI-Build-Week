@@ -104,6 +104,10 @@ fn init_with_paths<W: Write>(
             "Almost there — build the missing binaries with `cargo build --release`, then run `tractus`."
         )?;
     }
+    writeln!(
+        output,
+        "On first launch Codex will ask you to trust this hook — approve it once, or it is skipped."
+    )?;
     Ok(())
 }
 
