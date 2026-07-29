@@ -8,3 +8,4 @@ chaos-core = { path = "../chaos-core" }
 ct-shim = { path = "../ct-shim" }
 serde.workspace = true
 serde_json.workspace = true
+toml_edit.workspace = true

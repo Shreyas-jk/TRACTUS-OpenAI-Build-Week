@@ -9,42 +9,40 @@ OpenAI Build Week 2026, Developer Tools track.
 - [DESIGN.md](DESIGN.md) — system design
 - [TRACTUS_CORE.md](TRACTUS_CORE.md) — Rust engine architecture
 
-## Durable project contracts from the CLI
+## Quickstart
 
-Build the launcher and daemon once, create a contract for the current repository, then launch Codex through it:
+Three commands take you from a fresh clone to Codex running under an enforced contract:
 
 ```sh
-cargo build --release --bin tractus --bin chaosd --bin ct-hook
-./target/release/tractus new
-./target/release/tractus codex
+cargo build --release          # build every binary once
+./target/release/tractus init  # one-time setup (installs the Codex hook + enables it)
+./target/release/tractus        # pick or create a contract, then launch Codex
 ```
 
-`tractus new` is a terminal wizard: it records paths, operations, dependency/network/Git grants, shows a plain-language preview, and saves only after confirmation. Documents live in the local `.tractus/` directory, with the 20 most recently used contracts retained by default (the store supports a bounded 10–30 policy). `tractus codex` loads the selected document, starts or reuses a workspace-local daemon, verifies that daemon owns the same workspace, registers that exact contract, and launches Codex with its contract ID. A missing, corrupt, cross-workspace, or unregistered document prevents Codex from starting.
+Requires Codex CLI **v0.114 or newer** with experimental hooks, on macOS or Linux.
 
-Pass Codex options after `--`, for example `tractus codex -- --model gpt-5.6-terra`. Set `TRACTUS_SOCK` only when deliberately overriding the workspace-local socket.
+### `tractus init`
 
-## Install as a Codex plugin
+One-time, idempotent setup that replaces the previous manual steps:
 
-Tractus's Codex hook requires Codex CLI **v0.114 or newer** with experimental hooks, and is supported on macOS and Linux only.
+- Generates the machine-local `.codex/hooks.json` pointing at the committed self-locating wrapper (covers both `Bash` and native `apply_patch`). The file is gitignored, so every clone generates its own absolute path.
+- Enables the experimental hook feature flag in `~/.codex/config.toml`, preserving your existing settings and writing a timestamped backup before any edit. (Respects `CODEX_HOME`.)
+- Verifies the `chaosd` and `ct-hook` binaries are built and reports anything missing.
 
-1. Build and install the hook with:
+Safe to re-run: unchanged files are left untouched.
 
-   ```sh
-   cargo build --release --bin ct-hook && ./scripts/install-hook.sh
-   ```
+### `tractus`
 
-   This generates the machine-local `.codex/hooks.json` with the absolute path to the committed self-locating wrapper. The file is intentionally gitignored: every clone must generate its own path. The hook covers both `Bash` and native `apply_patch` edits.
-2. Enable hooks in `~/.codex/config.toml`:
+Run with no command for the guided flow: it lists the recent contracts for the current repository (or launches the wizard if there are none), activates your choice, then starts Codex with it enforced. Pass Codex options after `--`, for example `tractus -- --model gpt-5.6-terra`.
 
-   ```toml
-   [features]
-   hooks = true
-   ```
+The individual subcommands remain for scripting:
 
-3. Create a contract with `tractus new`, then start Codex with `tractus codex`.
-4. Commands outside that contract are denied inline before Codex runs them.
+- `tractus new` — the contract wizard only. Records paths, operations, dependency/network/Git grants, shows a plain-language preview, and saves only after confirmation. Documents live in the local `.tractus/` directory, with the 20 most recently used contracts retained by default (bounded 10–30 policy).
+- `tractus codex` — launch with the active contract. Loads the selected document, starts or reuses a workspace-local daemon, verifies that daemon owns the same workspace, registers that exact contract, and launches Codex with its contract ID. A missing, corrupt, cross-workspace, or unregistered document prevents Codex from starting.
 
-`ct-hook` sends proposals to the same `chaosd` instance as `ct-shim`, so the existing dashboard lights up live with no extra wiring. Start the dashboard from the project root (or set `TRACTUS_WORKSPACE_ROOT` to it) and it will select `.tractus/chaosd.sock` automatically.
+Set `TRACTUS_SOCK` only when deliberately overriding the workspace-local socket.
+
+Commands outside the active contract are denied inline before Codex runs them. `ct-hook` sends proposals to the same `chaosd` instance as `ct-shim`, so the dashboard lights up live with no extra wiring — start it from the project root (or set `TRACTUS_WORKSPACE_ROOT` to it) and it selects `.tractus/chaosd.sock` automatically.
 
 > **Hook payload validation:** verified against a live Codex CLI v0.145.0 run on macOS. Both `Bash` and native `apply_patch` arrive as `PreToolUse` payloads with a string in `tool_input.command`. Set `TRACTUS_HOOK_LOG=/path/to/capture.log` to capture future version changes before relying on a new Codex release.
 

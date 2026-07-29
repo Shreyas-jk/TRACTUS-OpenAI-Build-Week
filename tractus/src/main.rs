@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process;
 use tractus::store::{ContractDocument, ContractStore, StoreError};
 
+mod init;
 mod launcher;
 
 const ARTIFACT_PATHS: &[&str] = &[
@@ -44,6 +45,10 @@ where
             write_usage(output)?;
             Ok(0)
         }
+        Command::Init => {
+            init::run_init(output)?;
+            Ok(0)
+        }
         Command::New { workspace_root } => {
             let _ = run_new(&workspace_root, input, output)?;
             Ok(0)
@@ -52,15 +57,24 @@ where
             workspace_root,
             codex_args,
         } => launcher::launch_codex(&workspace_root, &codex_args).map_err(CliError::Launcher),
+        Command::Launch {
+            workspace_root,
+            codex_args,
+        } => run_launch(&workspace_root, &codex_args, input, output),
     }
 }
 
 #[derive(Debug, Eq, PartialEq)]
 enum Command {
+    Init,
     New {
         workspace_root: PathBuf,
     },
     Codex {
+        workspace_root: PathBuf,
+        codex_args: Vec<String>,
+    },
+    Launch {
         workspace_root: PathBuf,
         codex_args: Vec<String>,
     },
@@ -71,61 +85,95 @@ fn parse_command<I>(arguments: I) -> Result<Command, CliError>
 where
     I: IntoIterator<Item = String>,
 {
-    let mut arguments = arguments.into_iter();
-    let Some(command) = arguments.next() else {
-        return Err(CliError::Usage("missing command".to_owned()));
+    let arguments: Vec<String> = arguments.into_iter().collect();
+    let Some(command) = arguments.first() else {
+        return Ok(Command::Launch {
+            workspace_root: env::current_dir()?,
+            codex_args: Vec::new(),
+        });
     };
-    if matches!(command.as_str(), "--help" | "-h" | "help") {
-        return Ok(Command::Help);
-    }
     match command.as_str() {
-        "new" => {
-            let mut workspace_root = env::current_dir()?;
-            while let Some(argument) = arguments.next() {
-                match argument.as_str() {
-                    "--help" | "-h" => return Ok(Command::Help),
-                    "--workspace" => {
-                        let path = arguments.next().ok_or_else(|| {
-                            CliError::Usage("--workspace requires a path argument".to_owned())
-                        })?;
-                        workspace_root = PathBuf::from(path);
-                    }
-                    _ => return Err(CliError::Usage(format!("unknown argument {argument:?}"))),
-                }
-            }
-            Ok(Command::New { workspace_root })
-        }
+        "--help" | "-h" | "help" => Ok(Command::Help),
+        "init" => parse_init(&arguments[1..]),
+        "new" => parse_new(&arguments[1..]),
         "codex" => {
-            let mut workspace_root = env::current_dir()?;
-            let mut codex_args = Vec::new();
-            let mut pass_through = false;
-            while let Some(argument) = arguments.next() {
-                if pass_through {
-                    codex_args.push(argument);
-                    continue;
-                }
-                match argument.as_str() {
-                    "--workspace" => {
-                        let path = arguments.next().ok_or_else(|| {
-                            CliError::Usage("--workspace requires a path argument".to_owned())
-                        })?;
-                        workspace_root = PathBuf::from(path);
-                    }
-                    "--" => pass_through = true,
-                    _ => codex_args.push(argument),
-                }
-            }
+            let (workspace_root, codex_args) = parse_launch_args(&arguments[1..])?;
             Ok(Command::Codex {
                 workspace_root,
                 codex_args,
             })
         }
-        _ => Err(CliError::Usage(format!("unknown command {command:?}"))),
+        // No recognized subcommand means the bare launch flow: pick or create a
+        // contract, then start Codex. Any stray tokens pass through to Codex.
+        _ => {
+            let (workspace_root, codex_args) = parse_launch_args(&arguments)?;
+            Ok(Command::Launch {
+                workspace_root,
+                codex_args,
+            })
+        }
     }
 }
 
+fn parse_init(arguments: &[String]) -> Result<Command, CliError> {
+    for argument in arguments {
+        match argument.as_str() {
+            "--help" | "-h" => return Ok(Command::Help),
+            _ => return Err(CliError::Usage(format!("unknown argument {argument:?}"))),
+        }
+    }
+    Ok(Command::Init)
+}
+
+fn parse_new(arguments: &[String]) -> Result<Command, CliError> {
+    let mut workspace_root = env::current_dir()?;
+    let mut arguments = arguments.iter();
+    while let Some(argument) = arguments.next() {
+        match argument.as_str() {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--workspace" => {
+                let path = arguments.next().ok_or_else(|| {
+                    CliError::Usage("--workspace requires a path argument".to_owned())
+                })?;
+                workspace_root = PathBuf::from(path);
+            }
+            _ => return Err(CliError::Usage(format!("unknown argument {argument:?}"))),
+        }
+    }
+    Ok(Command::New { workspace_root })
+}
+
+fn parse_launch_args(arguments: &[String]) -> Result<(PathBuf, Vec<String>), CliError> {
+    let mut workspace_root = env::current_dir()?;
+    let mut codex_args = Vec::new();
+    let mut pass_through = false;
+    let mut arguments = arguments.iter();
+    while let Some(argument) = arguments.next() {
+        if pass_through {
+            codex_args.push(argument.clone());
+            continue;
+        }
+        match argument.as_str() {
+            "--workspace" => {
+                let path = arguments.next().ok_or_else(|| {
+                    CliError::Usage("--workspace requires a path argument".to_owned())
+                })?;
+                workspace_root = PathBuf::from(path);
+            }
+            "--" => pass_through = true,
+            _ => codex_args.push(argument.clone()),
+        }
+    }
+    Ok((workspace_root, codex_args))
+}
+
 fn write_usage<W: Write>(output: &mut W) -> Result<(), CliError> {
-    writeln!(output, "usage: tractus new [--workspace <path>]")?;
+    writeln!(
+        output,
+        "usage: tractus [--workspace <path>] [-- <codex args>]"
+    )?;
+    writeln!(output, "       tractus init")?;
+    writeln!(output, "       tractus new [--workspace <path>]")?;
     writeln!(
         output,
         "       tractus codex [--workspace <path>] [-- <codex args>]"
@@ -133,7 +181,11 @@ fn write_usage<W: Write>(output: &mut W) -> Result<(), CliError> {
     writeln!(output, "")?;
     writeln!(
         output,
-        "Create an Intent Contract or launch Codex with the active one enforced."
+        "Run with no command to pick or create a contract and launch Codex."
+    )?;
+    writeln!(
+        output,
+        "`init` performs one-time setup: installs the Codex hook and enables it."
     )?;
     Ok(())
 }
@@ -197,6 +249,88 @@ fn run_new<R: BufRead, W: Write>(
         document.id
     )?;
     Ok(NewOutcome::Created(document))
+}
+
+/// The bare `tractus` flow: pick an existing contract or create one, activate it,
+/// then launch Codex with it enforced.
+fn run_launch<R: BufRead, W: Write>(
+    workspace_root: &Path,
+    codex_args: &[String],
+    input: &mut R,
+    output: &mut W,
+) -> Result<i32, CliError> {
+    let canonical = fs::canonicalize(workspace_root)?;
+    let store = ContractStore::open(&canonical)?;
+    let documents = store.list()?;
+
+    let selected_id = if documents.is_empty() {
+        writeln!(
+            output,
+            "No contracts yet for this workspace — let's create one."
+        )?;
+        writeln!(output, "")?;
+        match run_new(workspace_root, input, output)? {
+            NewOutcome::Created(document) => document.id,
+            NewOutcome::Cancelled => return Ok(0),
+        }
+    } else {
+        match select_contract(&store, &documents, workspace_root, input, output)? {
+            Some(id) => id,
+            None => return Ok(0),
+        }
+    };
+
+    // `launch_codex` re-reads the active contract, so make the selection active
+    // before handing off.
+    store.activate(&selected_id)?;
+    launcher::launch_codex(workspace_root, codex_args).map_err(CliError::Launcher)
+}
+
+fn select_contract<R: BufRead, W: Write>(
+    store: &ContractStore,
+    documents: &[ContractDocument],
+    workspace_root: &Path,
+    input: &mut R,
+    output: &mut W,
+) -> Result<Option<String>, CliError> {
+    writeln!(
+        output,
+        "Recent contracts for {}:",
+        store.workspace_root().display()
+    )?;
+    for (index, document) in documents.iter().enumerate() {
+        writeln!(output, "  [{}] {}", index + 1, document.contract.task)?;
+    }
+    writeln!(output, "")?;
+
+    loop {
+        let raw = prompt_line(input, output, "Select a contract [1], (n)ew, or (q)uit: ")?;
+        if raw.is_empty() {
+            return Ok(Some(documents[0].id.clone()));
+        }
+        match raw.to_ascii_lowercase().as_str() {
+            "q" | "quit" => {
+                writeln!(output, "No contract selected.")?;
+                return Ok(None);
+            }
+            "n" | "new" => {
+                return match run_new(workspace_root, input, output)? {
+                    NewOutcome::Created(document) => Ok(Some(document.id)),
+                    NewOutcome::Cancelled => Ok(None),
+                };
+            }
+            _ => match raw.parse::<usize>() {
+                Ok(choice) if (1..=documents.len()).contains(&choice) => {
+                    return Ok(Some(documents[choice - 1].id.clone()));
+                }
+                _ => writeln!(
+                    output,
+                    "Enter a number from 1 through {}, n, or q.",
+                    documents.len()
+                )?,
+            },
+        }
+    }
 }
 
 fn prompt_nonempty<R: BufRead, W: Write>(
@@ -566,6 +700,7 @@ enum CliError {
     Io(io::Error),
     Store(StoreError),
     Launcher(launcher::LauncherError),
+    Init(init::InitError),
 }
 
 impl fmt::Display for CliError {
@@ -582,6 +717,7 @@ impl fmt::Display for CliError {
             Self::Io(error) => write!(formatter, "I/O error: {error}"),
             Self::Store(error) => write!(formatter, "contract store error: {error}"),
             Self::Launcher(error) => write!(formatter, "launcher error: {error}"),
+            Self::Init(error) => write!(formatter, "init error: {error}"),
         }
     }
 }
@@ -592,8 +728,15 @@ impl Error for CliError {
             Self::Io(error) => Some(error),
             Self::Store(error) => Some(error),
             Self::Launcher(error) => Some(error),
+            Self::Init(error) => Some(error),
             _ => None,
         }
+    }
+}
+
+impl From<init::InitError> for CliError {
+    fn from(error: init::InitError) -> Self {
+        Self::Init(error)
     }
 }
 
@@ -758,5 +901,96 @@ mod tests {
                 codex_args: vec!["--model".to_owned(), "gpt-5.6-terra".to_owned()],
             }
         );
+    }
+
+    #[test]
+    fn no_arguments_selects_the_bare_launch_flow() {
+        assert!(matches!(
+            parse_command(Vec::<String>::new()).unwrap(),
+            Command::Launch { codex_args, .. } if codex_args.is_empty()
+        ));
+    }
+
+    #[test]
+    fn init_command_parses() {
+        assert_eq!(parse_command(["init".to_owned()]).unwrap(), Command::Init);
+    }
+
+    #[test]
+    fn bare_launch_forwards_workspace_and_codex_arguments() {
+        assert_eq!(
+            parse_command([
+                "--workspace".to_owned(),
+                "/tmp/project".to_owned(),
+                "--".to_owned(),
+                "--model".to_owned(),
+                "gpt-5.6-terra".to_owned(),
+            ])
+            .unwrap(),
+            Command::Launch {
+                workspace_root: PathBuf::from("/tmp/project"),
+                codex_args: vec!["--model".to_owned(), "gpt-5.6-terra".to_owned()],
+            }
+        );
+    }
+
+    #[test]
+    fn select_contract_defaults_to_most_recent_and_quits() {
+        let workspace = TestWorkspace::new();
+        let store = ContractStore::open(&workspace.root).unwrap();
+        store
+            .create(chaos_core::contract::ContractSpec {
+                task: "older task".to_owned(),
+                allowed_paths: vec!["src/**".to_owned(), "target/**".to_owned()],
+                allowed_ops: OpSet::empty(),
+                deps_may_change: false,
+                git_ops: GitOpSet::empty(),
+                network: false,
+            })
+            .unwrap();
+        let newest = store
+            .create(chaos_core::contract::ContractSpec {
+                task: "newest task".to_owned(),
+                allowed_paths: vec!["src/**".to_owned(), "target/**".to_owned()],
+                allowed_ops: OpSet::empty(),
+                deps_may_change: false,
+                git_ops: GitOpSet::empty(),
+                network: false,
+            })
+            .unwrap();
+        let documents = store.list().unwrap();
+
+        // Empty input picks the most recently used contract (list is MRU-first).
+        let mut enter = Cursor::new(b"\n".to_vec());
+        let mut output = Vec::new();
+        let chosen =
+            select_contract(&store, &documents, &workspace.root, &mut enter, &mut output).unwrap();
+        assert_eq!(chosen, Some(newest.id));
+
+        // `q` selects nothing.
+        let mut quit = Cursor::new(b"q\n".to_vec());
+        let mut output = Vec::new();
+        assert_eq!(
+            select_contract(&store, &documents, &workspace.root, &mut quit, &mut output).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn launching_with_no_contract_and_declining_creation_does_not_start_codex() {
+        let workspace = TestWorkspace::new();
+        // Wizard input that declines the final save.
+        let mut input = wizard_input("n");
+        let mut output = Vec::new();
+
+        assert_eq!(
+            run_launch(&workspace.root, &[], &mut input, &mut output).unwrap(),
+            0
+        );
+        assert!(ContractStore::open(&workspace.root)
+            .unwrap()
+            .load_active()
+            .unwrap()
+            .is_none());
     }
 }
