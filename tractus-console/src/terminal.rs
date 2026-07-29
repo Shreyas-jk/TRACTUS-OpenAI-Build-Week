@@ -10,13 +10,13 @@ use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use serde_json::Value;
 use std::env;
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
 
 const INITIAL_ROWS: u16 = 24;
 const INITIAL_COLS: u16 = 80;
 
-pub async fn bridge_terminal(mut socket: WebSocket) {
+pub async fn bridge_terminal(mut socket: WebSocket, daemon_socket: PathBuf) {
     let pty = native_pty_system();
     let pair = match pty.openpty(PtySize {
         rows: INITIAL_ROWS,
@@ -28,7 +28,7 @@ pub async fn bridge_terminal(mut socket: WebSocket) {
         Err(_) => return,
     };
 
-    let mut child = match pair.slave.spawn_command(demo_command()) {
+    let mut child = match pair.slave.spawn_command(demo_command(&daemon_socket)) {
         Ok(child) => child,
         Err(_) => return,
     };
@@ -105,20 +105,27 @@ pub async fn bridge_terminal(mut socket: WebSocket) {
     let _ = child.wait();
 }
 
-fn demo_command() -> CommandBuilder {
-    if let Some(configured) = env::var("DEMO_SHELL")
+fn demo_command(daemon_socket: &Path) -> CommandBuilder {
+    // portable-pty seeds the child from the console's environment, so PATH and
+    // friends are inherited. Point the shim at the same daemon the console uses;
+    // otherwise it falls back to its own default socket and reports "unreachable".
+    let mut builder =
+        configured_command().unwrap_or_else(|| CommandBuilder::new(default_shim_path()));
+    builder.env("TRACTUS_SOCK", daemon_socket);
+    builder
+}
+
+fn configured_command() -> Option<CommandBuilder> {
+    let configured = env::var("DEMO_SHELL")
         .ok()
-        .filter(|value| !value.is_empty())
-    {
-        if let Ok(mut parts) = shell_words::split(&configured) {
-            if !parts.is_empty() {
-                let mut builder = CommandBuilder::new(parts.remove(0));
-                builder.args(parts);
-                return builder;
-            }
-        }
+        .filter(|value| !value.is_empty())?;
+    let mut parts = shell_words::split(&configured).ok()?;
+    if parts.is_empty() {
+        return None;
     }
-    CommandBuilder::new(default_shim_path())
+    let mut builder = CommandBuilder::new(parts.remove(0));
+    builder.args(parts);
+    Some(builder)
 }
 
 fn default_shim_path() -> PathBuf {

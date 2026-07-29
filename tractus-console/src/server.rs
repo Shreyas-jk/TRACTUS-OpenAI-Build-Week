@@ -139,8 +139,9 @@ async fn events_ws(upgrade: WebSocketUpgrade, State(state): State<AppState>) -> 
     upgrade.on_upgrade(move |socket| bridge_events(socket, state))
 }
 
-async fn terminal_ws(upgrade: WebSocketUpgrade) -> Response {
-    upgrade.on_upgrade(bridge_terminal)
+async fn terminal_ws(upgrade: WebSocketUpgrade, State(state): State<AppState>) -> Response {
+    let daemon_socket = state.daemon.socket_path().clone();
+    upgrade.on_upgrade(move |socket| bridge_terminal(socket, daemon_socket))
 }
 
 /// Forward daemon events to the browser; attach an advisory explanation to each
