@@ -271,7 +271,7 @@
       <span class="status" id="status-session" data-state="offline"><i class="status-dot"></i>session</span>
     </div>
   </header>
-  <p class="daemon-banner" id="daemon-offline-banner" role="status">Daemon offline — commands remain fail-closed until chaosd reconnects.</p>
+  <p class="daemon-banner" id="daemon-offline-banner" role="status">Daemon offline — commands remain fail-closed until tractusd reconnects.</p>
 
   <main class="console">
     <aside class="contract-column" aria-label="Intent contract">
@@ -393,7 +393,7 @@
         actions.append(confirm);
         section.append(actions);
       }
-      section.append(element("p", "contract-footer", "enforced by chaos-core · zero LLM calls in the blocking path"));
+      section.append(element("p", "contract-footer", "enforced by tractus-core · zero LLM calls in the blocking path"));
       $("#task-form").hidden = true;
       section.hidden = false;
     }

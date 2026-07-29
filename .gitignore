@@ -1,11 +1,10 @@
 # Rust (Cargo.lock stays tracked: workspace ships binaries)
 /target
 
-# Python control plane
-__pycache__/
-*.pyc
-.venv/
+# Secrets and local caches (OPENAI_API_KEY lives in .env, never committed)
 .env
+__pycache__/
+.venv/
 
 # Local-only planning material (never in the public submission repo)
 /private/

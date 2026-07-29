@@ -4,20 +4,22 @@
 
 ## 1. Process model
 
-Three Rust artifacts in one cargo workspace, plus the Python control plane:
+Rust crates in one cargo workspace — the whole product is one toolchain:
 
 ```
 tractus/
 ├── Cargo.toml            # workspace
-├── tractus-core/           # lib: contract, parse, classify, verdict, history. Pure, no IO.
-├── tractusd/               # bin: daemon. Owns enforcement state, twin pool, event bus.
-├── tractus-shim/              # bin: interceptor. Thin client invoked per command.
-└── control/              # Python: FastAPI UI server + GPT-5.6 calls (separate from workspace)
+├── tractus-core/         # lib: contract, parse, classify, verdict, history. Pure, no IO.
+├── tractusd/             # bin: daemon. Owns enforcement state, twin pool, event bus.
+├── tractus-shim/         # bin: sh -c interceptor. Thin client invoked per command.
+├── tractus-hook/         # bin: native Codex PreToolUse plugin.
+├── tractus/              # bin: contract wizard + fail-closed Codex launcher.
+└── tractus-console/      # bin: axum dashboard + GPT-5.6 intent extraction + event bridge
 ```
 
 - **`tractus-shim`** mimics the `sh -c` interface so any agent that shells out can use it: Codex CLI is configured with `SHELL=tractus-shim` (or its shell hook), and each proposed command arrives as `tractus-shim -c "<command>"`. The shim sends the command to `tractusd` over a Unix domain socket, waits for the verdict, then either `exec`s the real `/bin/sh -c <command>` (preserving cwd, env, tty, and exit code) or prints the synthetic handoff output and exits 1. The shim contains zero decision logic.
 - **`tractusd`** is the single long-lived daemon: loads the active contract, runs the verdict pipeline from `tractus-core`, owns the Docker twin pool, holds `NEEDS_HUMAN` commands pending user decisions, and broadcasts events. Socket at `$XDG_RUNTIME_DIR/tractus.sock`, JSON-lines protocol.
-- **`control/` (FastAPI)** connects to the same socket: subscribes to the event stream for the UI WebSocket, sends `set_contract` after intent extraction, and sends `resolve` when the user clicks approve/reject. All GPT-5.6 calls live here, never in Rust, preserving the "no LLM in the enforcement path" invariant at the process boundary.
+- **`tractus-console` (axum)** connects to the same socket: subscribes to the event stream for the UI WebSocket, sends `set_contract` after intent extraction, and sends `resolve` when the user clicks approve/reject. All GPT-5.6 calls live in this separate binary, never in `tractusd`, preserving the "no LLM in the enforcement path" invariant at the process boundary.
 
 ## 2. Core data types (`tractus-core`)
 
@@ -188,7 +190,7 @@ The same function checks twin-observed diffs: the twin's file diff is converted 
  "synthetic_stdout":"Command blocked by Tractus: dependency changes are not in scope..."}
 {"type":"verdict","id":"c17","action":"hold"}            // NEEDS_HUMAN, shim waits (60 s cap)
 
-// control (FastAPI) ↔ tractusd
+// tractus-console (axum) ↔ tractusd
 {"type":"subscribe"}                                     // → stream of contract/proposed/twin-diff/verdict/blocked/loop-halt events
 {"type":"set_contract","contract":{...}}
 {"type":"resolve","id":"c17","decision":"approve_once"}  // or "reject"

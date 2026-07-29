@@ -42,7 +42,18 @@ The individual subcommands remain for scripting:
 
 Set `TRACTUS_SOCK` only when deliberately overriding the workspace-local socket.
 
-Commands outside the active contract are denied inline before Codex runs them. `tractus-hook` sends proposals to the same `tractusd` instance as `tractus-shim`, so the dashboard lights up live with no extra wiring — start it from the project root (or set `TRACTUS_WORKSPACE_ROOT` to it) and it selects `.tractus/tractusd.sock` automatically.
+Commands outside the active contract are denied inline before Codex runs them.
+
+## Firewall dashboard (`tractus-console`)
+
+`tractus-console` is a single Rust binary that serves the live firewall dashboard, extracts Intent Contracts with GPT-5.6, and bridges the daemon's event stream to the browser. It replaces the former Python/FastAPI control plane, so the whole product is now one `cargo build` and one toolchain.
+
+```sh
+export OPENAI_API_KEY=sk-...        # for intent extraction; the dashboard degrades gracefully without it
+cargo run --release -p tractus-console
+```
+
+Then open <http://127.0.0.1:8787>. Started from the project root, it auto-selects the same `.tractus/tractusd.sock` that `tractus codex` uses, so `tractus-hook` and `tractus-shim` proposals light up the ledger live with no extra wiring. Flags: `--addr <host:port>`, `--sock <path>`, `--workspace <path>`. All GPT-5.6 calls live in the console, never in `tractusd` — the enforcement path stays deterministic and LLM-free. Model overrides: `INTENT_MODEL` (default `gpt-5.6-sol`), `EXPLAIN_MODEL` (default `gpt-5.6-luna`).
 
 > **Hook payload validation:** verified against a live Codex CLI v0.145.0 run on macOS. Both `Bash` and native `apply_patch` arrive as `PreToolUse` payloads with a string in `tool_input.command`. Set `TRACTUS_HOOK_LOG=/path/to/capture.log` to capture future version changes before relying on a new Codex release.
 

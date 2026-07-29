@@ -75,7 +75,7 @@ user request ──▶ GPT-5.6: intent extraction ──▶ Intent Contract (use
                                            │   └───────────┬──────────────┘
                                            ▼               ▼
                                     ┌─────────────────────────────────┐
-                                    │  FastAPI + WebSocket → Ghost UI  │
+                                    │  tractus-console (axum + WS)     │
                                     │  contract panel | real terminal  │
                                     │  twin preview diff | proof trace │
                                     └─────────────────────────────────┘
@@ -112,7 +112,7 @@ When a twin diff or classifier verdict is a violation, GPT-5.6 gets (contract, c
 
 ### 4.5 Control plane and UI
 
-FastAPI + WebSocket events: `contract`, `proposed`, `twin-diff`, `verdict`, `blocked`, `loop-halt`. Single-page dashboard: contract panel (the plain-language toggle card from Section 3; clauses light up red when violated), real terminal (xterm.js), twin preview diff pane, proof trace on block, per-violation "approve once" button so a block is a conversation, not a dead end.
+`tractus-console` (Rust / axum) + WebSocket events: `contract`, `proposed`, `twin-diff`, `verdict`, `blocked`, `loop-halt`. Single-page dashboard: contract panel (the plain-language toggle card from Section 3; clauses light up red when violated), real terminal (xterm.js), twin preview diff pane, proof trace on block, per-violation "approve once" button so a block is a conversation, not a dead end.
 
 ## 5. Cut from v1 (and why)
 
@@ -138,7 +138,7 @@ FastAPI + WebSocket events: `contract`, `proposed`, `twin-diff`, `verdict`, `blo
 | Engine | Rust (`shell-words`, custom classifier) | Deterministic ms-latency blocking path |
 | Twin | Docker + overlayfs CoW snapshots, pre-warmed pool | Ground truth without a learned model |
 | Intent + explainer | GPT-5.6 API (structured outputs) | LLM where it is strong; judged criterion |
-| Control plane | FastAPI + WebSocket | Known stack |
+| Control plane | `tractus-console` (Rust / axum + WebSocket) | One toolchain; LLM/web kept out of the enforcement daemon |
 | UI | Single page, xterm.js, vanilla JS | Demo-focused, no framework ceremony |
 | Agent under test | Codex CLI | Hackathon requirement and build tool |
 
