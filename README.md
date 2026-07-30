@@ -71,6 +71,13 @@ The design is a deliberate **neurosymbolic split**: the model turns fuzzy human 
 
 Both model calls live in `tractus-console`, never in the enforcement daemon. Tractus began as an OpenAI Build Week 2026 project (Developer Tools track) built in the Codex CLI with GPT-5.6.
 
+## Continuous integration and evals
+
+Two layers, matching standard practice for LLM-backed systems — deterministic checks gate every change; the costly, non-deterministic LLM sweep runs separately.
+
+- **`ci.yml`** (every push/PR): `cargo fmt --check`, `cargo build`, `cargo test --workspace`. Fast and fully deterministic; the enforcement engine's snapshot/property tests live here. (Docker twin tests are `#[ignore]`d.)
+- **`tractus-eval`** + **`eval.yml`** (manual/nightly): an **LLM-as-judge** harness for the model surface. For each case in a versioned dataset (`tractus-eval/cases.json`) it runs the real intent extraction, applies deterministic must-checks (deps/network/run gates, required paths), then grades the contract with a rubric judge (structured output, criteria scored 1–5: faithfulness, least-privilege, path-scope) using **repeat + min-pass** to absorb non-determinism. It never runs on the PR gate (cost + flakiness) and never touches the enforcement path. Run it locally with `cargo run -p tractus-eval -- --report eval-report.json` (needs `OPENAI_API_KEY`); in CI it needs the `OPENAI_API_KEY` repository secret.
+
 ## Repository layout
 
 | Crate | Role |
@@ -81,5 +88,6 @@ Both model calls live in `tractus-console`, never in the enforcement daemon. Tra
 | `tractus-hook` | Native Codex `PreToolUse` plugin |
 | `tractus` | Contract wizard + fail-closed Codex launcher (`init`, `new`, `codex`) |
 | `tractus-console` | axum dashboard + GPT-5.6 intent extraction + event bridge |
+| `tractus-eval` | LLM-as-judge eval harness for intent extraction (dev tooling) |
 
 See [DESIGN.md](DESIGN.md) for the full design and [TRACTUS_CORE.md](TRACTUS_CORE.md) for the engine internals.

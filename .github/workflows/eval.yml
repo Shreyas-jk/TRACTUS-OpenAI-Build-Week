@@ -1,0 +1,39 @@
+name: LLM Eval
+
+# The LLM-as-judge sweep is costly and non-deterministic, so it does NOT gate
+# pull requests. It runs on demand and nightly against the versioned dataset,
+# and uploads a report. Requires the OPENAI_API_KEY repository secret.
+on:
+  workflow_dispatch:
+    inputs:
+      repeats:
+        description: "Repeats per case (min-pass absorbs non-determinism)"
+        required: false
+        default: "2"
+  schedule:
+    - cron: "0 8 * * *" # 08:00 UTC nightly
+
+jobs:
+  intent-eval:
+    name: intent-extraction eval
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: rustc --version && cargo --version
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run eval
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          EVAL_REPEATS: ${{ github.event.inputs.repeats || '2' }}
+        run: cargo run --release -p tractus-eval -- --report eval-report.json
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: eval-report.json

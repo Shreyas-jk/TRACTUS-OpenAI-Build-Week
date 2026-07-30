@@ -1,5 +1,5 @@
 [workspace]
-members = ["tractus-core", "tractusd", "tractus-shim", "tractus-hook", "tractus", "tractus-console"]
+members = ["tractus-core", "tractusd", "tractus-shim", "tractus-hook", "tractus", "tractus-console", "tractus-eval"]
 resolver = "2"
 
 [workspace.package]

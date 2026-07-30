@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: fmt · build · test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # rustup installs the toolchain pinned in rust-toolchain.toml (1.97.0 + rustfmt).
+      - name: Show toolchain
+        run: rustc --version && cargo --version
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Build
+        run: cargo build --workspace --locked
+
+      # Docker twin tests are #[ignore]d and need Docker, so they stay out of the
+      # gate; `cargo test` runs everything else.
+      - name: Test
+        run: cargo test --workspace --locked
