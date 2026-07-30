@@ -527,13 +527,54 @@ fn normalize_path(raw: &str) -> Result<String, String> {
 }
 
 /// A trailing path segment is a file when it carries an interior extension dot
-/// (`api_test.rs`), but not a leading-dot directory (`.venv`).
+/// (`api_test.rs`), or is a well-known extensionless file or dotfile
+/// (`Makefile`, `.gitignore`), but not a leading-dot directory (`.venv`).
 fn looks_like_file(path: &str) -> bool {
     let last = path.rsplit('/').next().unwrap_or(path);
+    if is_known_file_name(last) {
+        return true;
+    }
     match last.rfind('.') {
         Some(index) => index > 0 && index < last.len() - 1,
         None => false,
     }
+}
+
+/// Common extensionless files and no-extension dotfiles the interior-dot
+/// heuristic would otherwise mistake for directories.
+fn is_known_file_name(name: &str) -> bool {
+    const KNOWN: &[&str] = &[
+        "Makefile",
+        "makefile",
+        "GNUmakefile",
+        "Dockerfile",
+        "Containerfile",
+        "Rakefile",
+        "Gemfile",
+        "Procfile",
+        "Jenkinsfile",
+        "Vagrantfile",
+        "Brewfile",
+        "LICENSE",
+        "LICENCE",
+        "README",
+        "CHANGELOG",
+        "NOTICE",
+        "AUTHORS",
+        "COPYING",
+        "CODEOWNERS",
+        ".gitignore",
+        ".gitattributes",
+        ".dockerignore",
+        ".env",
+        ".editorconfig",
+        ".npmrc",
+        ".nvmrc",
+        ".eslintrc",
+        ".prettierrc",
+        ".babelrc",
+    ];
+    KNOWN.contains(&name)
 }
 
 fn parse_choices(raw: &str, maximum: usize) -> Result<Vec<usize>, String> {
@@ -894,6 +935,9 @@ mod tests {
         assert_eq!(normalize_path("src/").unwrap(), "src/**");
         assert_eq!(normalize_path(".venv").unwrap(), ".venv/**");
         assert_eq!(normalize_path("src/*.rs").unwrap(), "src/*.rs");
+        // Known extensionless files and dotfiles stay literal.
+        assert_eq!(normalize_path("Makefile").unwrap(), "Makefile");
+        assert_eq!(normalize_path(".gitignore").unwrap(), ".gitignore");
     }
 
     #[test]

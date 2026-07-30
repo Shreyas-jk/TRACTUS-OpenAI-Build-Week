@@ -8,11 +8,9 @@
 //! place that encoding lives.
 
 use crate::ConsoleError;
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::env;
-use std::sync::OnceLock;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -196,7 +194,7 @@ pub async fn extract_intent(
     let text = output_text(&payload).ok_or(ConsoleError::EmptyCompletion)?;
     let parsed: ContractSpec =
         serde_json::from_str(&text).map_err(|_| ConsoleError::EmptyCompletion)?;
-    Ok(normalize_contract(parsed, request))
+    Ok(normalize_contract(parsed))
 }
 
 fn contract_schema() -> Value {
@@ -240,8 +238,17 @@ fn output_text(payload: &Value) -> Option<String> {
     (!collected.trim().is_empty()).then_some(collected)
 }
 
-/// Backstop the prompt rules so a model slip cannot widen the contract.
-pub fn normalize_contract(contract: ContractSpec, request: &str) -> ContractSpec {
+/// Apply the deterministic post-processing the model is told to leave out:
+/// append build-artifact paths, imply `test`/`build` for editing tasks, and
+/// canonicalize path globs.
+///
+/// Scope grants (`deps_may_change`, `network`, the `run` op) come from the
+/// model — which is prompted to be conservative — and the user's confirmation of
+/// the toggle card. We deliberately do NOT strip a granted permission based on
+/// request-text keyword matching: that heuristic produced false negatives (a
+/// request to "bump the tokio version" failed the dependency keywords and had
+/// its grant silently removed, then blocked the very work the user asked for).
+pub fn normalize_contract(contract: ContractSpec) -> ContractSpec {
     let mut allowed_paths = contract.allowed_paths.clone();
     allowed_paths.extend(ARTIFACT_PATHS.iter().map(|path| (*path).to_owned()));
     let allowed_paths = deduplicated(&allowed_paths);
@@ -252,9 +259,6 @@ pub fn normalize_contract(contract: ContractSpec, request: &str) -> ContractSpec
     let allowed_ops = Operation::ALL
         .into_iter()
         .filter(|operation| {
-            if *operation == Operation::Run {
-                return contract.has_op(Operation::Run) && explicitly_requests_run(request);
-            }
             if edits && matches!(operation, Operation::Test | Operation::Build) {
                 return true;
             }
@@ -271,9 +275,9 @@ pub fn normalize_contract(contract: ContractSpec, request: &str) -> ContractSpec
         task: contract.task,
         allowed_paths,
         allowed_ops,
-        deps_may_change: contract.deps_may_change && explicitly_requests_dependencies(request),
+        deps_may_change: contract.deps_may_change,
         git_ops,
-        network: contract.network && explicitly_requests_network(request),
+        network: contract.network,
     }
 }
 
@@ -320,43 +324,54 @@ fn normalize_path_glob(raw: &str) -> Option<String> {
 }
 
 /// A trailing path segment is treated as a file when it carries an interior
-/// extension dot (`api_test.rs`), but not a leading-dot directory (`.venv`).
+/// extension dot (`api_test.rs`), or is a well-known extensionless file or
+/// dotfile (`Makefile`, `.gitignore`), but not a leading-dot directory (`.venv`).
 fn looks_like_file(path: &str) -> bool {
     let last = path.rsplit('/').next().unwrap_or(path);
+    if is_known_file_name(last) {
+        return true;
+    }
     match last.rfind('.') {
         Some(index) => index > 0 && index < last.len() - 1,
         None => false,
     }
 }
 
-fn regex_for(pattern: &str) -> &'static Regex {
-    // One compiled Regex per call site, cached for the process lifetime.
-    static RUN: OnceLock<Regex> = OnceLock::new();
-    static NETWORK: OnceLock<Regex> = OnceLock::new();
-    static DEPENDENCIES: OnceLock<Regex> = OnceLock::new();
-    let cell = match pattern {
-        RUN_PATTERN => &RUN,
-        NETWORK_PATTERN => &NETWORK,
-        DEPENDENCIES_PATTERN => &DEPENDENCIES,
-        _ => unreachable!("unknown intent pattern"),
-    };
-    cell.get_or_init(|| Regex::new(pattern).expect("static intent pattern compiles"))
-}
-
-const RUN_PATTERN: &str = r"(?i)\b(?:run|execute|launch|start)\s+(?:the\s+)?(?:app|application|server|service|program|binary)\b|\bcargo\s+run\b";
-const NETWORK_PATTERN: &str = r"(?i)https?://|\b(?:network|internet|online|download|fetch|curl|wget|publish|deploy|push|install)\b|\bapi\s+(?:call|request|endpoint)\b";
-const DEPENDENCIES_PATTERN: &str = r"(?i)\b(?:dependency|dependencies|package|packages|cargo\s+(?:add|remove)|npm\s+install|pip\s+install|add|remove|upgrade|update|install)\b";
-
-fn explicitly_requests_run(request: &str) -> bool {
-    regex_for(RUN_PATTERN).is_match(request)
-}
-
-fn explicitly_requests_network(request: &str) -> bool {
-    regex_for(NETWORK_PATTERN).is_match(request)
-}
-
-fn explicitly_requests_dependencies(request: &str) -> bool {
-    regex_for(DEPENDENCIES_PATTERN).is_match(request)
+/// Common extensionless files and no-extension dotfiles the interior-dot
+/// heuristic would otherwise mistake for directories.
+fn is_known_file_name(name: &str) -> bool {
+    const KNOWN: &[&str] = &[
+        "Makefile",
+        "makefile",
+        "GNUmakefile",
+        "Dockerfile",
+        "Containerfile",
+        "Rakefile",
+        "Gemfile",
+        "Procfile",
+        "Jenkinsfile",
+        "Vagrantfile",
+        "Brewfile",
+        "LICENSE",
+        "LICENCE",
+        "README",
+        "CHANGELOG",
+        "NOTICE",
+        "AUTHORS",
+        "COPYING",
+        "CODEOWNERS",
+        ".gitignore",
+        ".gitattributes",
+        ".dockerignore",
+        ".env",
+        ".editorconfig",
+        ".npmrc",
+        ".nvmrc",
+        ".eslintrc",
+        ".prettierrc",
+        ".babelrc",
+    ];
+    KNOWN.contains(&name)
 }
 
 /// Render the user-facing, plain-language representation of a contract.
@@ -438,8 +453,7 @@ mod tests {
 
     #[test]
     fn editing_implies_test_and_build_and_appends_artifacts() {
-        let normalized =
-            normalize_contract(spec(vec![Operation::Edit], false, false), "fix a test");
+        let normalized = normalize_contract(spec(vec![Operation::Edit], false, false));
         assert!(normalized.allowed_ops.contains(&Operation::Test));
         assert!(normalized.allowed_ops.contains(&Operation::Build));
         assert_eq!(
@@ -456,20 +470,21 @@ mod tests {
     }
 
     #[test]
-    fn run_network_and_deps_require_explicit_language() {
-        let widened = spec(vec![Operation::Edit, Operation::Run], true, true);
-        let normalized = normalize_contract(widened.clone(), "fix the failing unit test");
-        assert!(!normalized.allowed_ops.contains(&Operation::Run));
-        assert!(!normalized.network);
-        assert!(!normalized.deps_may_change);
+    fn model_grants_pass_through_without_keyword_stripping() {
+        // The model (prompted to be conservative) and the user's confirmation own
+        // scope; normalization no longer strips grants on request phrasing, which
+        // used to false-block valid work like "bump the tokio version".
+        let granted = spec(vec![Operation::Edit, Operation::Run], true, true);
+        let normalized = normalize_contract(granted);
+        assert!(normalized.allowed_ops.contains(&Operation::Run));
+        assert!(normalized.network);
+        assert!(normalized.deps_may_change);
 
-        let explicit = normalize_contract(
-            widened,
-            "run the server and upgrade the axios dependency over the network",
-        );
-        assert!(explicit.allowed_ops.contains(&Operation::Run));
-        assert!(explicit.network);
-        assert!(explicit.deps_may_change);
+        // A contract the model kept minimal stays minimal.
+        let minimal = normalize_contract(spec(vec![Operation::Edit], false, false));
+        assert!(!minimal.allowed_ops.contains(&Operation::Run));
+        assert!(!minimal.network);
+        assert!(!minimal.deps_may_change);
     }
 
     #[test]
@@ -481,6 +496,16 @@ mod tests {
         );
         assert_eq!(normalize_path_glob("src").as_deref(), Some("src/**"));
         assert_eq!(normalize_path_glob("src/").as_deref(), Some("src/**"));
+        // Extensionless files and dotfiles stay literal; .venv is a known dir.
+        assert_eq!(normalize_path_glob("Makefile").as_deref(), Some("Makefile"));
+        assert_eq!(
+            normalize_path_glob("Dockerfile").as_deref(),
+            Some("Dockerfile")
+        );
+        assert_eq!(
+            normalize_path_glob(".gitignore").as_deref(),
+            Some(".gitignore")
+        );
         assert_eq!(normalize_path_glob(".venv").as_deref(), Some(".venv/**"));
         assert_eq!(normalize_path_glob("src/*.rs").as_deref(), Some("src/*.rs"));
         assert_eq!(
@@ -511,8 +536,7 @@ mod tests {
 
     #[test]
     fn toggle_card_marks_implied_and_artifact_clauses() {
-        let normalized =
-            normalize_contract(spec(vec![Operation::Edit], false, false), "edit the code");
+        let normalized = normalize_contract(spec(vec![Operation::Edit], false, false));
         let card = toggle_card(&normalized);
         let groups = card["groups"].as_array().unwrap();
         let operations = &groups[1]["clauses"];

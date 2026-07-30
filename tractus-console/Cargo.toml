@@ -17,7 +17,6 @@ serde_json.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 axum = { version = "0.8", features = ["ws"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-regex = "1"
 portable-pty = "0.9"
 shell-words.workspace = true
 futures-util = "0.3"
